@@ -1,3 +1,4 @@
+#include <time.h>
 #include <WiFi.h>
 #include <OneWire.h>
 #include <HTTPClient.h>
@@ -7,28 +8,16 @@
 #include <HardwareSerial.h>
 #include <DallasTemperature.h>
 
-// #include <time.h>
-// #include <Arduino.h>
-// #include <freertos/task.h>
-// #include <freertos/FreeRTOS.h>
-// #include "esp_task_wdt.h"
-// #include <freertos/semphr.h>
-
-// #include <Arduino_FreeRTOS.h>
-// #include <semphr.h>
-
 // Thông tin Firebase
 #define FIREBASE_HOST "https://todolistapp-408f2-default-rtdb.asia-southeast1.firebasedatabase.app/"
 #define FIREBASE_AUTH "iej75ZGaEnpVDwfR67qv82qSa7GNq60DJf9AO5ig"
 
-// Semaphore để đồng bộ hóa
-// SemaphoreHandle_t sensorHLKSemaphore;
-// SemaphoreHandle_t relaySemaphore;
-
 #define WIFI_SSID "Camera1"
 #define WIFI_PASSWORD "22052020"
 
-#define SHUTDOWN_TIMEOUT (900000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
+// #define SHUTDOWN_TIMEOUT (900000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
+#define SHUTDOWN_TIMEOUT (9000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
+
 const char* serverIPs[] = {
   "192.168.1.19",
   "192.168.1.78",
@@ -40,6 +29,7 @@ const int serverPort = 8080;
 // cảm biến HLK-LD2410B-P
 #define OUT_PIN 15  //HLK-LD2410B-P
 HardwareSerial mySerial(1);
+
 
 // Cảm biến DS18B20
 #define OUT_TEM_1 12  // Pin for the DS18B20 c1 la 13
@@ -78,19 +68,18 @@ bool manualToAutoSwitch = false;
 int relayOnCounts[4] = { 0, 0, 0, 0 };  // Số lần bật của từng relay
 int relays[] = { RELAY_1_PIN, RELAY_2_PIN, RELAY_3_PIN, RELAY_4_PIN };
 
+// Task handles
+TaskHandle_t firebaseTaskHandle;
+TaskHandle_t relayTaskHandle;
 
 void setup() {
-  // Khởi tạo semaphore cho RELAY
-  // relaySemaphore = xSemaphoreCreateBinary();
-  // if (relaySemaphore != NULL) {
-  //   xSemaphoreGive(relaySemaphore);  // Khởi tạo semaphore ở trạng thái sẵn sàng
-  // }
-
   Serial.begin(115200);
   pzemSerial.begin(9600, SERIAL_8N1, RXD2, TXD2);  //Pzem
   mySerial.begin(256000, SERIAL_8N1);              //HLK
   String currentTime = getCurrentTime();
-  pinMode(OUT_PIN, INPUT);
+  // pinMode(OUT_PIN, INPUT);
+  pinMode(OUT_PIN, INPUT_PULLDOWN);
+
   pinMode(RELAY_1_PIN, OUTPUT);  // Cấu hình relay là OUTPUT
   pinMode(RELAY_2_PIN, OUTPUT);
   pinMode(RELAY_3_PIN, OUTPUT);
@@ -138,16 +127,30 @@ void setup() {
   Serial.print("Lấy thời gian thành công: ");
   Serial.println(&timeinfo, "Current time: %Y-%m-%d_%H:%M:%S");
 
-  // Khởi tạo task
-  //           tên hàm   tên tượng trưng  stack null mức độ ưu tiên  handle của task
-  // xTaskCreate(TaskUploadTemperature, "TaskUploadTemperature", 3772, NULL, 1, NULL); //3710
+  // Create tasks for dual-core processing
+  // xTaskCreatePinnedToCore(
+  //   TaskUploadHLK,        // Task function
+  //   "TaskUploadHLK",      // Name of task
+  //   10192,                // Stack size
+  //   NULL,                 // Task input parameter
+  //   1,                    // Priority
+  //   &firebaseTaskHandle,  // Task handle
+  //   0                     // Core 0
+  // );
+  // vTaskDelay(500 / portTICK_PERIOD_MS);
 
-  xTaskCreate(TaskControlRelayMode, "TaskControlRelayMode", 10192, NULL, 1, NULL);  //6796
-  xTaskCreate(TaskUploadHLK, "TaskUploadHLK", 44192, NULL, 0, NULL);                //3710 12748 //6192
-
-  // xTaskCreate(TaskRadarData, "TaskRadarData", 8196, NULL, 0, NULL);
-  // xTaskCreate(TaskTemperatureData, "TaskTemperatureData", 8196, NULL, 0, NULL);
-  // xTaskCreate(TaskPZEMData, "TaskPZEMData", 8192, NULL, 0, NULL);
+  // xTaskCreatePinnedToCore(
+  //   TaskControlRelayMode,    // Task function
+  //   "TaskControlRelayMode",  // Name of task
+  //   10192,                   // Stack size
+  //   NULL,                    // Task input parameter
+  //   1,                       // Priority
+  //   &relayTaskHandle,        // Task handle
+  //   1                        // Core 1
+  // );
+  // vTaskDelay(500 / portTICK_PERIOD_MS);
+xTaskCreate(TaskControlRelayMode, "TaskControlRelayMode", 10192, NULL, 1, NULL);  //6796
+xTaskCreate(TaskUploadHLK, "TaskUploadHLK", 10192, NULL, 0, NULL);                //3710 12748 //6192
 }
 
 //1.1 Hàm lấy thời gian
@@ -161,28 +164,44 @@ String getCurrentTime() {
   return String(timeString);
 }
 
-// Hàm này đang không dùng
-//1.2  Hàm set trạng thái auto cho việc bật máy tính
-// void setAuto(bool isAuto) {
-//     Serial.println("Setting Auto...");
-//     if (Firebase.setBool(firebaseData, F("/isAuto/status"), isAuto)) {
-//         Serial.println("Set Auto: ok");
-//     } else {
-//         Serial.printf("Set Auto failed: %s\n", firebaseData.errorReason().c_str());
-//     }
+//1.2 Hàm get trạng thái auto trên firebase
+// bool getAuto() {
+//   if (Firebase.getBool(firebaseData, "/isAuto/status")) {
+//     return firebaseData.boolData();
+//   } else {
+//     Serial.printf("Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
+//     return false;
+//   }
 // }
-
-//1.3 Hàm get trạng thái auto trên firebase
+// 1.2 v2
 bool getAuto() {
-  if (Firebase.getBool(firebaseData, "/isAuto/status")) {
-    return firebaseData.boolData();
-  } else {
-    Serial.printf("Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
+  // Kiểm tra xem kết nối Firebase có ổn định không trước khi thực hiện truy vấn
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected. Please check connection.");
     return false;
+  }
+  // Kiểm tra trạng thái từ Firebase
+  if (Firebase.getBool(firebaseData, "/isAuto/status")) {
+    if (firebaseData.boolData()) {
+      Serial.println("Auto mode is enabled.");
+      return true;
+    } else {
+      Serial.println("Auto mode is disabled.");
+      return false;
+    }
+  } else {
+    // In lỗi chi tiết nếu không thể lấy dữ liệu từ Firebase
+    Serial.printf("Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
+
+    // Thử lại nếu có lỗi kết nối Firebase
+    Serial.println("Retrying to fetch data...");
+    delay(1000);       // Delay trước khi thử lại 1 giây
+    return getAuto();  // Thử lại việc truy vấn
   }
 }
 
-//1.4 Hàm kiểm tra cảm biến radar và điều khiển relay ở chế độ Auto sử dụng tick cho rtos
+
+//1.3 Hàm kiểm tra cảm biến radar và điều khiển relay ở chế độ Auto sử dụng tick cho rtos
 void controlComputersForRadar() {
   static TickType_t lastDetectionTime = 0;       // Thời gian cuối cùng phát hiện người (ticks)
   TickType_t currentTime = xTaskGetTickCount();  // Thời gian hiện tại (ticks)
@@ -209,7 +228,7 @@ void controlComputersForRadar() {
   }
 }
 
-//1.5 Hàm điều khiển relay theo lệnh từ Firebase ở chế độ Manual
+//1.4 Hàm điều khiển relay theo lệnh từ Firebase ở chế độ Manual
 void controlComputersManually() {
   for (int i = 0; i < 4; i++) {                                           // Duyệt qua các relay và điều khiển dựa trên lệnh từ Firebase
     String relayPath = "/Computer/computer" + String(i + 1) + "/status";  // Đường dẫn tới trạng thái nút điều khiển relay trong Firebase
@@ -238,77 +257,144 @@ void controlComputersManually() {
   }
 }
 
-//1.6 Hàm bật ngẫu nhiên 2 máy tính
+//1.5 Hàm bật ngẫu nhiên 2 máy tính
+// void OnRelay() {
+//   // Mở bộ nhớ Preferences để đọc lại giá trị trước đó khi relay tắt điện
+//   preferences.begin("relay-app", false);               //Tham số đầu là gọi relay-app trong bộ nhớ, tham số thứ 2 là mở chế độ read/write
+//   int bootCount = preferences.getInt("bootCount", 0);  // Đọc giá trị của biến "bootCount" từ Preferences, nếu không có sẽ mặc định là 0
+//   Serial.printf("Boot count: %d\n", bootCount);
+//   turnOnRelaysByCombination(bootCount % 6, 4);  // Giới hạn tới 6 cặp relay // Gọi hàm bật relay theo số lần khởi động hiện tại
+//   bootCount++;                                  // Tăng số lần khởi động cho lần khởi động tiếp theo
+//   preferences.putInt("bootCount", bootCount);   // Lưu giá trị mới của "bootCount" vào Preferences
+//   preferences.end();                            // Đóng Preferences
+// }
+// 1.5, 1.6v2
+// Mảng chứa tổ hợp relay đã được định nghĩa trước 12 34 23 14 13 24
+const int predefinedCombinations[6][2] = {
+  { 0, 1 },  // Relay 1 & Relay 2
+  { 2, 3 },  // Relay 3 & Relay 4
+  { 1, 2 },  // Relay 2 & Relay 3
+  { 0, 3 },  // Relay 1 & Relay 4
+  { 0, 2 },  // Relay 1 & Relay 3
+  { 1, 3 }   // Relay 2 & Relay 4
+};
+const int totalCombinations = 6;  // Tổng số tổ hợp
+
 void OnRelay() {
   // Mở bộ nhớ Preferences để đọc lại giá trị trước đó khi relay tắt điện
-  preferences.begin("relay-app", false);               //Tham số đầu là gọi relay-app trong bộ nhớ, tham số thứ 2 là mở chế độ read/write
-  int bootCount = preferences.getInt("bootCount", 0);  // Đọc giá trị của biến "bootCount" từ Preferences, nếu không có sẽ mặc định là 0
+  preferences.begin("relay-app", false);               // Mở "relay-app" trong bộ nhớ, chế độ read/write
+  int bootCount = preferences.getInt("bootCount", 0);  // Đọc giá trị "bootCount" từ Preferences (mặc định 0)
   Serial.printf("Boot count: %d\n", bootCount);
-  turnOnRelaysByCombination(bootCount % 6, 4);  // Giới hạn tới 6 cặp relay // Gọi hàm bật relay theo số lần khởi động hiện tại
-  bootCount++;                                  // Tăng số lần khởi động cho lần khởi động tiếp theo
-  preferences.putInt("bootCount", bootCount);   // Lưu giá trị mới của "bootCount" vào Preferences
-  preferences.end();                            // Đóng Preferences
-}
-//1.7 Hàm sinh tất cả các tổ hợp của 2 phần tử trong n phần tử
-void generateCombinations(int n, int k, int combinations[][2], int& count) {
-  int indices[k];
-  for (int i = 0; i < k; i++) {
-    indices[i] = i;
+  // Gọi hàm bật relay theo số lần khởi động hiện tại (bật 2 relay theo tổ hợp)
+  turnOnRelaysByCombination(bootCount % totalCombinations);  // Giới hạn tới totalCombinations
+  // Tăng số lần khởi động cho lần tiếp theo
+  bootCount++;
+  if (bootCount > 1000) {
+    bootCount = 0;
   }
-  while (true) {
-    // Lưu tổ hợp hiện tại
-    for (int i = 0; i < k; i++) {
-      combinations[count][i] = indices[i];
-    }
-    count++;
-    // Tìm tổ hợp kế tiếp
-    int i = k - 1;
-    while (i >= 0 && indices[i] == n - k + i) {
-      i--;
-    }
-    if (i < 0) break;
-    indices[i]++;
-    for (int j = i + 1; j < k; j++) {
-      indices[j] = indices[i] + j - i;
-    }
-  }
+  // Lưu giá trị mới của "bootCount" vào Preferences
+  preferences.putInt("bootCount", bootCount);
+  // Đóng Preferences
+  preferences.end();
 }
 
-//1.8 Hàm bật relay theo cặp sinh ra từ tổ hợp
-void turnOnRelaysByCombination(int bootCount, int n) {
-  int combinations[100][2];                         // Mảng chứa tổ hợp (giả sử có tối đa 100 tổ hợp)
-  int count = 0;                                    // Biến đếm số lượng tổ hợp
-  generateCombinations(n, 2, combinations, count);  // Sinh tổ hợp 2 phần tử từ n phần tử
-  if (bootCount < 0 || bootCount >= count) {        // Kiểm tra xem bootCount có hợp lệ không
+//1.6 Hàm sinh tất cả các tổ hợp của 2 phần tử trong n phần tử
+// void generateCombinations(int n, int k, int combinations[][2], int& count) {
+//   int indices[k];
+//   for (int i = 0; i < k; i++) {
+//     indices[i] = i;
+//   }
+//   while (true) {
+//     // Lưu tổ hợp hiện tại
+//     for (int i = 0; i < k; i++) {
+//       combinations[count][i] = indices[i];
+//     }
+//     count++;
+//     // Tìm tổ hợp kế tiếp
+//     int i = k - 1;
+//     while (i >= 0 && indices[i] == n - k + i) {
+//       i--;
+//     }
+//     if (i < 0) break;
+//     indices[i]++;
+//     for (int j = i + 1; j < k; j++) {
+//       indices[j] = indices[i] + j - i;
+//     }
+//   }
+// }
+
+
+
+
+//1.7 Hàm bật relay theo cặp sinh ra từ tổ hợp
+// void turnOnRelaysByCombination(int bootCount, int n) {
+//   int combinations[100][2];                         // Mảng chứa tổ hợp (giả sử có tối đa 100 tổ hợp)
+//   int count = 0;                                    // Biến đếm số lượng tổ hợp
+//   generateCombinations(n, 2, combinations, count);  // Sinh tổ hợp 2 phần tử từ n phần tử
+//   if (bootCount < 0 || bootCount >= count) {        // Kiểm tra xem bootCount có hợp lệ không
+//     Serial.println("Invalid boot count");
+//     return;
+//   }
+//   int relay1 = combinations[bootCount][0];
+//   int relay2 = combinations[bootCount][1];
+//   // Bật máy tính thứ 1 (relay1)
+//   if (!relayStates[relay1]) {
+//     digitalWrite(relays[relay1], LOW);  // Bật relay (kích mức thấp)
+//     relayOnCounts[relay1]++;            // Tăng số lần bật của relay1
+//     Serial.printf("Turned on relay %d\n", relay1 + 1);
+//     vTaskDelay(1000 / portTICK_PERIOD_MS);  // Mô phỏng nhấn nút nguồn trong 1 giây
+//     digitalWrite(relays[relay1], HIGH);     // Ngắt relay sau khi bật
+//     relayStates[relay1] = true;             // Cập nhật trạng thái relay1
+//   }
+//   // Bật máy tính thứ 2 (relay2)
+//   if (!relayStates[relay2]) {
+//     digitalWrite(relays[relay2], LOW);  // Bật relay (kích mức thấp)
+//     relayOnCounts[relay2]++;            // Tăng số lần bật của relay2
+//     Serial.printf("Turned on relay %d\n", relay2 + 1);
+//     vTaskDelay(1000 / portTICK_PERIOD_MS);
+//     digitalWrite(relays[relay2], HIGH);  // Ngắt relay sau khi bật
+//     relayStates[relay2] = true;          // Cập nhật trạng thái relay2
+//   }
+//   // Cập nhật trạng thái relay lên Firebase
+//   updateRelayStatesToFirebase(relayStates);
+//   updateRelayOnCountsToFirebase(relayOnCounts);
+// }
+//1.7v2 Hàm bật relay theo cặp giảm thiểu bộ nhớ
+void turnOnRelaysByCombination(int bootCount) {
+  if (bootCount < 0 || bootCount >= totalCombinations) {  // Kiểm tra bootCount hợp lệ
     Serial.println("Invalid boot count");
     return;
   }
-  int relay1 = combinations[bootCount][0];
-  int relay2 = combinations[bootCount][1];
-  // Bật máy tính thứ 1 (relay1)
+
+  int relay1 = predefinedCombinations[bootCount][0];
+  int relay2 = predefinedCombinations[bootCount][1];
+
+  // Bật relay1
   if (!relayStates[relay1]) {
-    digitalWrite(relays[relay1], LOW);  // Bật relay (kích mức thấp)
-    relayOnCounts[relay1]++;            // Tăng số lần bật của relay1
+    digitalWrite(relays[relay1], LOW);
+    relayOnCounts[relay1]++;
     Serial.printf("Turned on relay %d\n", relay1 + 1);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Mô phỏng nhấn nút nguồn trong 1 giây
-    digitalWrite(relays[relay1], HIGH);     // Ngắt relay sau khi bật
-    relayStates[relay1] = true;             // Cập nhật trạng thái relay1
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(relays[relay1], HIGH);
+    relayStates[relay1] = true;
   }
-  // Bật máy tính thứ 2 (relay2)
+
+  // Bật relay2
   if (!relayStates[relay2]) {
-    digitalWrite(relays[relay2], LOW);  // Bật relay (kích mức thấp)
-    relayOnCounts[relay2]++;            // Tăng số lần bật của relay2
+    digitalWrite(relays[relay2], LOW);
+    relayOnCounts[relay2]++;
     Serial.printf("Turned on relay %d\n", relay2 + 1);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
-    digitalWrite(relays[relay2], HIGH);  // Ngắt relay sau khi bật
-    relayStates[relay2] = true;          // Cập nhật trạng thái relay2
+    digitalWrite(relays[relay2], HIGH);
+    relayStates[relay2] = true;
   }
-  // Cập nhật trạng thái relay lên Firebase
+
+  // Cập nhật trạng thái và số lần bật tắt lên Firebase
   updateRelayStatesToFirebase(relayStates);
   updateRelayOnCountsToFirebase(relayOnCounts);
 }
 
-//1.9 Hàm update trạng thái relay lên firebase
+//1.8 Hàm update trạng thái relay lên firebase
 void updateRelayStatesToFirebase(bool status[]) {
   for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật trạng thái
     String relaySPath = "/Computer/computer" + String(i + 1) + "/status";
@@ -327,7 +413,7 @@ void updateRelayStatesToFirebase(bool status[]) {
   }
 }
 
-//1.10 Hàm update số lần bật tắt máy lên firebase
+//1.9 Hàm update số lần bật tắt máy lên firebase
 void updateRelayOnCountsToFirebase(int counts[]) {
   for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật số lần bật
     String relayCPath1 = "/Computerstatus/computer" + String(i + 1) + "/onCount";
@@ -339,7 +425,69 @@ void updateRelayOnCountsToFirebase(int counts[]) {
   }
 }
 
-//1.11 Hàm điều khiển máy tính ở các chế độ
+//1.10 Hàm điều khiển Relay
+void TaskControlRelayMode(void* pvParameters) {
+  while (true) {
+    Serial.print("Free heap: ");
+    Serial.println(esp_get_free_heap_size());
+    Serial.print("relay core: ");
+    Serial.println(xPortGetCoreID());
+    // getAuto();
+    // Kiểm tra xem có ở chế độ tự động hay không
+    if (getAuto()) {
+      if (!isAutoMode) {
+        Serial.print("Bật chế độ auto");
+        isAutoMode = true;          // Chuyển sang chế độ auto
+        manualToAutoSwitch = true;  // Đánh dấu vừa chuyển từ manual sang auto
+      }
+      Serial.print("Bật/tắt máy tính theo cảm biển radar ");
+      controlComputersForRadar();  // Điều khiển relay theo radar
+    } else {
+      isAutoMode = false;
+      controlComputersManually();  // Điều khiển relay thủ công
+      Serial.print("Đang ở chế độ thủ công");
+    }
+    // Kiểm tra và cập nhật trạng thái relay
+    Serial.printf("Updating relay states: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
+    // Nhả CPU trong 3 giây trước khi tiếp tục
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+  }
+}
+
+
+
+void loop() {
+}
+
+
+
+
+// #include <Arduino.h>
+// #include <freertos/task.h>
+// #include <freertos/FreeRTOS.h>
+// #include "esp_task_wdt.h"
+// #include <freertos/semphr.h>
+
+// #include <Arduino_FreeRTOS.h>
+// #include <semphr.h>
+
+// Semaphore để đồng bộ hóa
+// SemaphoreHandle_t sensorHLKSemaphore;
+// SemaphoreHandle_t relaySemaphore;
+
+// Hàm này đang không dùng
+//1.2  Hàm set trạng thái auto cho việc bật máy tính
+// void setAuto(bool isAuto) {
+//     Serial.println("Setting Auto...");
+//     if (Firebase.setBool(firebaseData, F("/isAuto/status"), isAuto)) {
+//         Serial.println("Set Auto: ok");
+//     } else {
+//         Serial.printf("Set Auto failed: %s\n", firebaseData.errorReason().c_str());
+//     }
+// }
+
+
+//1.10 Hàm điều khiển máy tính ở các chế độ dùng semaphore
 // void TaskControlRelayMode(void* pvParameters) {
 //     while (true) {
 //         // Yêu cầu quyền sử dụng tài nguyên thông qua semaphore
@@ -371,29 +519,23 @@ void updateRelayOnCountsToFirebase(int counts[]) {
 //     }
 // }
 
-void TaskControlRelayMode(void* pvParameters) {
-  while (true) {
-    Serial.print("Free heap: ");
-    Serial.println(esp_get_free_heap_size());
-    // Kiểm tra xem có ở chế độ tự động hay không
-    if (getAuto()) {
-      if (!isAutoMode) {
-        isAutoMode = true;          // Chuyển sang chế độ auto
-        manualToAutoSwitch = true;  // Đánh dấu vừa chuyển từ manual sang auto
-      }
-      controlComputersForRadar();  // Điều khiển relay theo radar
-    } else {
-      isAutoMode = false;
-      controlComputersManually();  // Điều khiển relay thủ công
-    }
-    // Kiểm tra và cập nhật trạng thái relay
-    Serial.printf("Updating relay states: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
-    // Nhả CPU trong 3 giây trước khi tiếp tục
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-  }
-}
+// các hàm nằm trong hàm setup
+// Khởi tạo semaphore cho RELAY
+// relaySemaphore = xSemaphoreCreateBinary();
+// if (relaySemaphore != NULL) {
+//   xSemaphoreGive(relaySemaphore);  // Khởi tạo semaphore ở trạng thái sẵn sàng
+// }
 
 
 
-void loop() {
-}
+// Khởi tạo task này nằm trong hàm setup
+//           tên hàm   tên tượng trưng  stack null mức độ ưu tiên  handle của task
+// xTaskCreate(TaskUploadTemperature, "TaskUploadTemperature", 3772, NULL, 1, NULL); //3710
+
+
+// xTaskCreate(TaskRadarData, "TaskRadarData", 8196, NULL, 0, NULL);
+// xTaskCreate(TaskTemperatureData, "TaskTemperatureData", 8196, NULL, 0, NULL);
+// xTaskCreate(TaskPZEMData, "TaskPZEMData", 8192, NULL, 0, NULL);
+
+// xTaskCreate(TaskControlRelayMode, "TaskControlRelayMode", 10192, NULL, 1, NULL);  //6796
+// xTaskCreate(TaskUploadHLK, "TaskUploadHLK", 44192, NULL, 0, NULL);                //3710 12748 //6192

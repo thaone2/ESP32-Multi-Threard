@@ -222,32 +222,69 @@
 // code mới code ok của ngày hôm nay
 void TaskUploadHLK(void* pvParameters) {
   // Cấu hình pin radar
-  pinMode(OUT_PIN, INPUT_PULLDOWN);
-
-  // Mở Preferences để lưu trạng thái `lastSentDay`
-  Preferences preferencesDay;
-  preferencesDay.begin("energy-data", false);
-  int lastSentDay = preferencesDay.getInt("lastSentDay", -1);
+  // pinMode(OUT_PIN, INPUT_PULLDOWN);
 
   TickType_t lastWakeTime = xTaskGetTickCount();       // Lưu thời gian bắt đầu task
   const TickType_t delayTicks = pdMS_TO_TICKS(25000);  // Chu kỳ thực thi: 20 giây
 
+  // Mở Preferences để lưu trạng thái `lastSentDay`
+  Preferences preferencesDay;
+  preferencesDay.begin("energy-data", false);
+
+  // Lấy thông tin ngày lưu trữ lần trước
+  int lastSentDay = preferencesDay.getInt("lastSentDay", -1);
+  int lastSentMonth = preferencesDay.getInt("lastSentMonth", -1);
+  int lastSentYear = preferencesDay.getInt("lastSentYear", -1);
+  // biến này để test chức năng gửi theo ngày
+  // lastSentDay = lastSentDay -2 ;
+  // preferencesDay.putInt("lastSentDay", lastSentDay);
+  // Serial.println("in ngay thang nam lan trước");
+  // Serial.println(lastSentDay);
+  // Serial.println(lastSentMonth);
+  // Serial.println(lastSentYear);
+
   // ----- GỬI `totalEnergy` MỘT LẦN MỖI NGÀY -----
   struct tm timeinfo;
   if (getLocalTime(&timeinfo)) {
-    int currentDay = timeinfo.tm_yday;  // Lấy ngày hiện tại
-    if (currentDay != lastSentDay) {
-      lastSentDay = currentDay;
+    int currentDay = timeinfo.tm_mday;          // Lấy ngày hiện tại
+    int currentMonth = timeinfo.tm_mon + 1;     // Lấy tháng hiện tại (1-12)
+    int currentYear = timeinfo.tm_year + 1900;  // Lấy năm hiện tại (tính từ 1900)
+    // Serial.println("in ngay thang nam lan trước");
+    // Serial.println(lastSentDay);
+    // Serial.println(lastSentMonth);
+    // Serial.println(lastSentYear);
+    // Serial.println("in ngay thang nam hom nay");
+    // Serial.println(currentDay);
+    // Serial.println(currentMonth);
+    // Serial.println(currentYear);
 
-      preferencesDay.putInt("lastSentDay", lastSentDay);  // Lưu vào bộ nhớ
+    // So sánh ngày, tháng, năm
+    if (currentDay != lastSentDay || currentMonth != lastSentMonth || currentYear != lastSentYear) {
+      // Nếu là ngày mới hoặc năm mới
+      if (currentYear > lastSentYear) {
+        // Reset năng lượng PZEM nếu là năm mới
+        pzem.resetEnergy();
+        Serial.println("Reset PZEM energy data for the new year.");
+      }
+
+      // Cập nhật ngày, tháng, năm đã gửi
+      lastSentDay = currentDay;
+      lastSentMonth = currentMonth;
+      lastSentYear = currentYear;
+
+      preferencesDay.putInt("lastSentDay", lastSentDay);
+      preferencesDay.putInt("lastSentMonth", lastSentMonth);
+      preferencesDay.putInt("lastSentYear", lastSentYear);
 
       // Gửi dữ liệu năng lượng tích lũy
       float totalEnergy = pzem.energy();
-      String currentTime = getCurrentTime();
-      if (!isnan(totalEnergy)) {
+      if (isnan(totalEnergy)) totalEnergy = 0;
+
+      if (!isnan(totalEnergy)  ) {
+        String currentTime = getCurrentTime();
         String energyPath = "/Energy_use/" + currentTime + "/totalEnergy";
         if (Firebase.setFloat(firebaseData, energyPath, totalEnergy)) {
-          Serial.printf("Total Energy sent: %.2f kWh\n", totalEnergy * 1000);
+          Serial.printf("Total Energy sent: %.2f kWh\n", totalEnergy);
         } else {
           Serial.printf("Failed to send total energy: %s\n", firebaseData.errorReason().c_str());
         }
@@ -258,9 +295,12 @@ void TaskUploadHLK(void* pvParameters) {
   } else {
     Serial.println("Failed to get current time for totalEnergy update.");
   }
+  preferencesDay.end();
 
 
   while (1) {
+    Serial.print("sensor core: ");
+    Serial.println(xPortGetCoreID());
     // ----- ĐỌC VÀ GỬI TRẠNG THÁI RADAR -----
     handleRadarData();
     vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -277,7 +317,7 @@ void TaskUploadHLK(void* pvParameters) {
   }
 
   // Đóng Preferences trước khi kết thúc task
-  preferencesDay.end();
+  // preferencesDay.end();
 }
 
 // Hàm xử lý dữ liệu radar
@@ -333,7 +373,7 @@ void handlePZEMData() {
 }
 
 
-// code mới 28/11
+// code mới 28/11 chia ra 3 task nhưng chạy bị lỗi--------------------------------------------------------------------------------------------------
 
 // #define DELAY_RADAR 10000  // Chu kỳ thực thi radar (20 giây)
 // // Task 1: Gửi dữ liệu từ cảm biến radar
@@ -435,3 +475,5 @@ void handlePZEMData() {
 //     vTaskDelay(pdMS_TO_TICKS(DELAY_PZEM));
 //   }
 // }
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------
