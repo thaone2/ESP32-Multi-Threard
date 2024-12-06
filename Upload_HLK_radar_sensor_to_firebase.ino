@@ -1,26 +1,14 @@
 // code mới code ok của ngày hôm nay
 void TaskUploadHLK(void* pvParameters) {
-  // Cấu hình pin radar
-  // pinMode(OUT_PIN, INPUT_PULLDOWN);
-
   TickType_t lastWakeTime = xTaskGetTickCount();       // Lưu thời gian bắt đầu task
   const TickType_t delayTicks = pdMS_TO_TICKS(25000);  // Chu kỳ thực thi: 25 giây
-
-  // Mở Preferences để lưu trạng thái `lastSentDay`
-  Preferences preferencesDay;
+  Preferences preferencesDay;                          // Mở Preferences để lưu trạng thái `lastSentDay`
   preferencesDay.begin("energy-data", false);
 
   // Lấy thông tin ngày lưu trữ lần trước
   int lastSentDay = preferencesDay.getInt("lastSentDay", -1);
   int lastSentMonth = preferencesDay.getInt("lastSentMonth", -1);
   int lastSentYear = preferencesDay.getInt("lastSentYear", -1);
-  // biến này để test chức năng gửi theo ngày
-  // lastSentDay = lastSentDay -2 ;
-  // preferencesDay.putInt("lastSentDay", lastSentDay);
-  // Serial.println("in ngay thang nam lan trước");
-  // Serial.println(lastSentDay);
-  // Serial.println(lastSentMonth);
-  // Serial.println(lastSentYear);
 
   // ----- GỬI `totalEnergy` MỘT LẦN MỖI NGÀY -----
   struct tm timeinfo;
@@ -28,14 +16,6 @@ void TaskUploadHLK(void* pvParameters) {
     int currentDay = timeinfo.tm_mday;          // Lấy ngày hiện tại
     int currentMonth = timeinfo.tm_mon + 1;     // Lấy tháng hiện tại (1-12)
     int currentYear = timeinfo.tm_year + 1900;  // Lấy năm hiện tại (tính từ 1900)
-    // Serial.println("in ngay thang nam lan trước");
-    // Serial.println(lastSentDay);
-    // Serial.println(lastSentMonth);
-    // Serial.println(lastSentYear);
-    // Serial.println("in ngay thang nam hom nay");
-    // Serial.println(currentDay);
-    // Serial.println(currentMonth);
-    // Serial.println(currentYear);
 
     // So sánh ngày, tháng, năm
     if (currentDay != lastSentDay || currentMonth != lastSentMonth || currentYear != lastSentYear) {
@@ -45,7 +25,6 @@ void TaskUploadHLK(void* pvParameters) {
         pzem.resetEnergy();
         Serial.println("Reset PZEM energy data for the new year.");
       }
-
       // Cập nhật ngày, tháng, năm đã gửi
       lastSentDay = currentDay;
       lastSentMonth = currentMonth;
@@ -58,7 +37,6 @@ void TaskUploadHLK(void* pvParameters) {
       // Gửi dữ liệu năng lượng tích lũy
       float totalEnergy = pzem.energy();
       if (isnan(totalEnergy)) totalEnergy = 0;
-
       if (!isnan(totalEnergy)) {
         String currentTime = getCurrentTime();
         String energyPath = "/Energy_use/" + currentTime + "/totalEnergy";
@@ -77,23 +55,32 @@ void TaskUploadHLK(void* pvParameters) {
   preferencesDay.end();
 
 
-  while (1) {
-    Serial.print("sensor core: ");
-    Serial.println(xPortGetCoreID());
-    // ----- ĐỌC VÀ GỬI TRẠNG THÁI RADAR -----
-    handleRadarData();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    // ----- ĐỌC VÀ GỬI NHIỆT ĐỘ -----
-    handleTemperatureData();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    // ----- ĐỌC VÀ GỬI DỮ LIỆU PZEM -----
-    handlePZEMData();
+  for (;;) {
+    if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+
+      Serial.print("sensor core: ");
+      Serial.println(xPortGetCoreID());
+      // ----- ĐỌC VÀ GỬI TRẠNG THÁI RADAR -----
+      handleRadarData();
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      // ----- ĐỌC VÀ GỬI NHIỆT ĐỘ -----
+      handleTemperatureData();
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      // ----- ĐỌC VÀ GỬI DỮ LIỆU PZEM -----
+      handlePZEMData();
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+
+
+      // Thực thi lại theo chu kỳ cố định
+      // vTaskDelayUntil(&lastWakeTime, delayTicks);
+      Serial.println("---------------TaskUpdateData: Accessing shared upload sensor.");
+      xSemaphoreGive(relayMutex);
+    } else {
+      Serial.println("Failed to acquire relayMutex for upload.");
+    }
     vTaskDelay(20000 / portTICK_PERIOD_MS);
-
-
-    // Thực thi lại theo chu kỳ cố định
-    // vTaskDelayUntil(&lastWakeTime, delayTicks);
   }
+
   // while (1) {
   //   // Đồng bộ Firebase với mutex
   //   if (xSemaphoreTake(firebaseMutex, portMAX_DELAY)) {

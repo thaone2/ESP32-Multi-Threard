@@ -76,8 +76,8 @@ TaskHandle_t relayTaskHandle;
 
 // semaphore
 SemaphoreHandle_t relayMutex;
-SemaphoreHandle_t firebaseMutex;
-SemaphoreHandle_t relayMutex1;
+// SemaphoreHandle_t firebaseMutex;
+// SemaphoreHandle_t relayMutex1;
 
 void setup() {
   Serial.begin(115200);                            // giao tiếp với serial monitor
@@ -122,35 +122,53 @@ void setup() {
   if (relayMutex == NULL) {
     Serial.println("Failed to create mutex");
   }
-  relayMutex1 = xSemaphoreCreateMutex();
-  if (relayMutex1 == NULL) {
-    Serial.println("Failed to create mutex!");
-  }
-  firebaseMutex = xSemaphoreCreateMutex();
-  if (firebaseMutex == NULL) {
-    Serial.println("Failed to create mutex!");
-  }
+  // relayMutex1 = xSemaphoreCreateMutex();
+  // if (relayMutex1 == NULL) {
+  //   Serial.println("Failed to create mutex!");
+  // }
+  // firebaseMutex = xSemaphoreCreateMutex();
+  // if (firebaseMutex == NULL) {
+  //   Serial.println("Failed to create mutex!");
+  // }
 
   // Tạo các task
-  vTaskDelay(500 / portTICK_PERIOD_MS);
   xTaskCreate(
     TaskControlRelayMode,    // Task function
     "TaskControlRelayMode",  // Name of task
     54192,                   // Stack size
     NULL,                    // Task input parameter
-    1,                       // Priority
+    2,                       // Priority
     &relayTaskHandle         // Task handle
   );
-
   xTaskCreate(
     TaskUploadHLK,       // Task function
     "TaskUploadHLK",     // Name of task
-    34192,                // Stack size
+    34192,               // Stack size
     NULL,                // Task input parameter
     1,                   // Priority
     &firebaseTaskHandle  // Task handle
   );
-  vTaskDelay(500 / portTICK_PERIOD_MS);
+
+
+
+  // xTaskCreatePinnedToCore(
+  //   TaskControlRelayMode,    // Task function
+  //   "TaskControlRelayMode",  // Name of task
+  //   40192,                   // Stack size
+  //   NULL,                    // Task input parameter
+  //   1,                       // Priority
+  //   &relayTaskHandle,        // Task handle
+  //   0                        // Core 1
+  // );
+  // xTaskCreatePinnedToCore(
+  //   TaskUploadHLK,        // Task function
+  //   "TaskUploadHLK",      // Name of task
+  //   40192,                // Stack size
+  //   NULL,                 // Task input parameter
+  //   0,                    // Priority
+  //   &firebaseTaskHandle,  // Task handle
+  //   1                     // Core 0
+  // );
 }
 
 //1.0 Hàm khởi tạo thời gian
@@ -183,39 +201,39 @@ String getCurrentTime() {
 
 
 // 1.2 v2 Hàm get trạng thái auto trên firebase
-bool getAuto() {
-  // Kiểm tra xem kết nối wifi có ổn định không trước khi thực hiện truy vấn
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi not connected. Please check connection.");
-    return false;
-  }
-  // Kiểm tra trạng thái từ Firebase
-  if (Firebase.getBool(firebaseData, "/isAuto/status")) {
-    if (firebaseData.boolData()) {
-      Serial.println("Auto mode is enabled: 1.");
-      return true;
-    } else {
-      Serial.println("Auto mode is disabled: 0.");
-      return false;
-    }
-  } else {
-    // In lỗi chi tiết nếu không thể lấy dữ liệu từ Firebase
-    Serial.printf("Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
-    // Thử lại nếu có lỗi kết nối Firebase
-    Serial.println("Retrying to fetch data getAuto function...");
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    return getAuto();  // Thử lại việc truy vấn
-  }
-}
-
 // bool getAuto() {
-//   if (Firebase.getBool(firebaseData, "/isAuto/status")) {
-//     return firebaseData.boolData();
-//   } else {
-//     Serial.printf("Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
+//   // Kiểm tra xem kết nối wifi có ổn định không trước khi thực hiện truy vấn
+//   if (WiFi.status() != WL_CONNECTED) {
+//     Serial.println("WiFi not connected. Please check connection.");
 //     return false;
 //   }
+//   // Kiểm tra trạng thái từ Firebase
+//   if (Firebase.getBool(firebaseData, "/isAuto/status")) {
+//     if (firebaseData.boolData()) {
+//       Serial.println("Auto mode is enabled: 1.");
+//       return true;
+//     } else {
+//       Serial.println("Auto mode is disabled: 0.");
+//       return false;
+//     }
+//   } else {
+//     // In lỗi chi tiết nếu không thể lấy dữ liệu từ Firebase
+//     Serial.printf("Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
+//     // Thử lại nếu có lỗi kết nối Firebase
+//     Serial.println("Retrying to fetch data getAuto function...");
+//     vTaskDelay(1000 / portTICK_PERIOD_MS);
+//     return getAuto();  // Thử lại việc truy vấn
+//   }
 // }
+
+bool getAuto() {
+  if (Firebase.getBool(firebaseData, "/isAuto/status")) {
+    return firebaseData.boolData();
+  } else {
+    Serial.printf("Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
+    return false;
+  }
+}
 
 //1.3 Hàm kiểm tra cảm biến radar và điều khiển relay ở chế độ Auto sử dụng tick cho rtos
 void controlComputersForRadar() {
@@ -485,8 +503,43 @@ void updateRelayOnCountsToFirebase(int counts[]) {
 }
 
 //1.10 Hàm điều khiển Relay
+void TaskControlRelayMode(void* pvParameters) {
+  for (;;) {
+
+    if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+      Serial.print("Free heap: ");
+      Serial.println(esp_get_free_heap_size());
+      Serial.print("relay core: ");
+      Serial.println(xPortGetCoreID());
+
+      // Kiểm tra xem có ở chế độ tự động hay không
+      if (getAuto()) {
+        Serial.println("Đang ở chế độ auto");
+
+        //Cập nhật trạng thái cho đúng về isAuto
+        if (!isAutoMode) {
+          isAutoMode = true;          // Chuyển sang chế độ auto
+          manualToAutoSwitch = true;  // Đánh dấu vừa chuyển từ manual sang auto
+        }
+
+        Serial.print("Điều khiển máy tính theo cảm biển radar ");
+        controlComputersForRadar();  // Điều khiển relay theo radar
+      } else {
+        isAutoMode = false;
+        Serial.print("Đang ở chế độ thủ công");
+        controlComputersManually();  // Điều khiển relay thủ công
+      }
+      Serial.println("----------------TaskControlRelayMode: Accessing relay.");
+      xSemaphoreGive(relayMutex);
+    }
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+  }
+}
+
+
+
 // void TaskControlRelayMode(void* pvParameters) {
-//   while (true) {
+//   for(;;) {
 //     Serial.print("Free heap: ");
 //     Serial.println(esp_get_free_heap_size());
 //     Serial.print("relay core: ");
@@ -496,60 +549,31 @@ void updateRelayOnCountsToFirebase(int counts[]) {
 //     if (getAuto()) {
 //       Serial.println("Đang ở chế độ auto");
 
-//       //Cập nhật trạng thái cho đúng về isAuto
+//       // Cập nhật trạng thái cho đúng về isAuto
 //       if (!isAutoMode) {
 //         isAutoMode = true;          // Chuyển sang chế độ auto
 //         manualToAutoSwitch = true;  // Đánh dấu vừa chuyển từ manual sang auto
 //       }
+//       Serial.print("Điều khiển máy tính theo cảm biến radar ");
 
-//       Serial.print("Điều khiển máy tính theo cảm biển radar ");
-//       controlComputersForRadar();  // Điều khiển relay theo radar
+//       // Lấy mutex trước khi điều khiển relay
+//       if (xSemaphoreTake(relayMutex1, portMAX_DELAY)) {  // Chờ vô hạn để có quyền truy cập vào relay
+//         controlComputersForRadar();                      // Điều khiển relay theo radar
+//         xSemaphoreGive(relayMutex1);                     // Giải phóng mutex sau khi hoàn thành
+//       }
 //     } else {
 //       isAutoMode = false;
-//       Serial.print("Đang ở chế độ thủ công");
-//       controlComputersManually();  // Điều khiển relay thủ công
+//       Serial.println("Đang ở chế độ thủ công");
+
+//       // Lấy mutex trước khi điều khiển relay
+//       if (xSemaphoreTake(relayMutex1, portMAX_DELAY)) {  // Chờ vô hạn để có quyền truy cập vào relay
+//         controlComputersManually();                      // Điều khiển relay thủ công
+//         xSemaphoreGive(relayMutex1);                     // Giải phóng mutex sau khi hoàn thành
+//       }
 //     }
-//     vTaskDelay(3500 / portTICK_PERIOD_MS);
+//     vTaskDelay(3500 / portTICK_PERIOD_MS);  // Đợi 3.5 giây trước khi lặp lại
 //   }
 // }
-
-void TaskControlRelayMode(void* pvParameters) {
-  while (true) {
-    Serial.print("Free heap: ");
-    Serial.println(esp_get_free_heap_size());
-    Serial.print("relay core: ");
-    Serial.println(xPortGetCoreID());
-
-    // Kiểm tra xem có ở chế độ tự động hay không
-    if (getAuto()) {
-      Serial.println("Đang ở chế độ auto");
-
-      // Cập nhật trạng thái cho đúng về isAuto
-      if (!isAutoMode) {
-        isAutoMode = true;          // Chuyển sang chế độ auto
-        manualToAutoSwitch = true;  // Đánh dấu vừa chuyển từ manual sang auto
-      }
-      Serial.print("Điều khiển máy tính theo cảm biến radar ");
-
-      // Lấy mutex trước khi điều khiển relay
-      if (xSemaphoreTake(relayMutex1, portMAX_DELAY)) {  // Chờ vô hạn để có quyền truy cập vào relay
-        controlComputersForRadar();                      // Điều khiển relay theo radar
-        xSemaphoreGive(relayMutex1);                     // Giải phóng mutex sau khi hoàn thành
-      }
-    } else {
-      isAutoMode = false;
-      Serial.println("Đang ở chế độ thủ công");
-
-      // Lấy mutex trước khi điều khiển relay
-      if (xSemaphoreTake(relayMutex1, portMAX_DELAY)) {  // Chờ vô hạn để có quyền truy cập vào relay
-        controlComputersManually();                      // Điều khiển relay thủ công
-        xSemaphoreGive(relayMutex1);                     // Giải phóng mutex sau khi hoàn thành
-      }
-    }
-
-    vTaskDelay(3500 / portTICK_PERIOD_MS);  // Đợi 3.5 giây trước khi lặp lại
-  }
-}
 
 
 

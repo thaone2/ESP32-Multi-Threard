@@ -36,7 +36,7 @@ void shutdownServer(const char* serverIP, int relayIndex) {
             http.end();  // Kết thúc kết nối
             attempt++;   // Tăng biến đếm số lần thử
             // delay(500); // Đợi 0.5 giây trước khi thử lại
-            vTaskDelay(1000/ portTICK_PERIOD_MS);
+            vTaskDelay(500/ portTICK_PERIOD_MS);
         }
         // Nếu sau 3 lần vẫn không thành công
         if (!success) {
