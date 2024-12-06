@@ -1,3 +1,171 @@
+// code mới code ok của ngày hôm nay
+void TaskUploadHLK(void* pvParameters) {
+  // Cấu hình pin radar
+  // pinMode(OUT_PIN, INPUT_PULLDOWN);
+
+  TickType_t lastWakeTime = xTaskGetTickCount();       // Lưu thời gian bắt đầu task
+  const TickType_t delayTicks = pdMS_TO_TICKS(25000);  // Chu kỳ thực thi: 25 giây
+
+  // Mở Preferences để lưu trạng thái `lastSentDay`
+  Preferences preferencesDay;
+  preferencesDay.begin("energy-data", false);
+
+  // Lấy thông tin ngày lưu trữ lần trước
+  int lastSentDay = preferencesDay.getInt("lastSentDay", -1);
+  int lastSentMonth = preferencesDay.getInt("lastSentMonth", -1);
+  int lastSentYear = preferencesDay.getInt("lastSentYear", -1);
+  // biến này để test chức năng gửi theo ngày
+  // lastSentDay = lastSentDay -2 ;
+  // preferencesDay.putInt("lastSentDay", lastSentDay);
+  // Serial.println("in ngay thang nam lan trước");
+  // Serial.println(lastSentDay);
+  // Serial.println(lastSentMonth);
+  // Serial.println(lastSentYear);
+
+  // ----- GỬI `totalEnergy` MỘT LẦN MỖI NGÀY -----
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo)) {
+    int currentDay = timeinfo.tm_mday;          // Lấy ngày hiện tại
+    int currentMonth = timeinfo.tm_mon + 1;     // Lấy tháng hiện tại (1-12)
+    int currentYear = timeinfo.tm_year + 1900;  // Lấy năm hiện tại (tính từ 1900)
+    // Serial.println("in ngay thang nam lan trước");
+    // Serial.println(lastSentDay);
+    // Serial.println(lastSentMonth);
+    // Serial.println(lastSentYear);
+    // Serial.println("in ngay thang nam hom nay");
+    // Serial.println(currentDay);
+    // Serial.println(currentMonth);
+    // Serial.println(currentYear);
+
+    // So sánh ngày, tháng, năm
+    if (currentDay != lastSentDay || currentMonth != lastSentMonth || currentYear != lastSentYear) {
+      // Nếu là ngày mới hoặc năm mới
+      if (currentYear > lastSentYear) {
+        // Reset năng lượng PZEM nếu là năm mới
+        pzem.resetEnergy();
+        Serial.println("Reset PZEM energy data for the new year.");
+      }
+
+      // Cập nhật ngày, tháng, năm đã gửi
+      lastSentDay = currentDay;
+      lastSentMonth = currentMonth;
+      lastSentYear = currentYear;
+
+      preferencesDay.putInt("lastSentDay", lastSentDay);
+      preferencesDay.putInt("lastSentMonth", lastSentMonth);
+      preferencesDay.putInt("lastSentYear", lastSentYear);
+
+      // Gửi dữ liệu năng lượng tích lũy
+      float totalEnergy = pzem.energy();
+      if (isnan(totalEnergy)) totalEnergy = 0;
+
+      if (!isnan(totalEnergy)) {
+        String currentTime = getCurrentTime();
+        String energyPath = "/Energy_use/" + currentTime + "/totalEnergy";
+        if (Firebase.setFloat(firebaseData, energyPath, totalEnergy)) {
+          Serial.printf("Total Energy sent: %.2f kWh\n", totalEnergy);
+        } else {
+          Serial.printf("Failed to send total energy: %s\n", firebaseData.errorReason().c_str());
+        }
+      }
+    } else {
+      Serial.println("Total Energy already sent for today. Skipping...");
+    }
+  } else {
+    Serial.println("Failed to get current time for totalEnergy update.");
+  }
+  preferencesDay.end();
+
+
+  while (1) {
+    Serial.print("sensor core: ");
+    Serial.println(xPortGetCoreID());
+    // ----- ĐỌC VÀ GỬI TRẠNG THÁI RADAR -----
+    handleRadarData();
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    // ----- ĐỌC VÀ GỬI NHIỆT ĐỘ -----
+    handleTemperatureData();
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    // ----- ĐỌC VÀ GỬI DỮ LIỆU PZEM -----
+    handlePZEMData();
+    vTaskDelay(20000 / portTICK_PERIOD_MS);
+
+
+    // Thực thi lại theo chu kỳ cố định
+    // vTaskDelayUntil(&lastWakeTime, delayTicks);
+  }
+  // while (1) {
+  //   // Đồng bộ Firebase với mutex
+  //   if (xSemaphoreTake(firebaseMutex, portMAX_DELAY)) {
+  //     handleRadarData();
+  //     vTaskDelay(500 / portTICK_PERIOD_MS);
+  //     handleTemperatureData();
+  //     vTaskDelay(500 / portTICK_PERIOD_MS);
+  //     handlePZEMData();
+  //     vTaskDelay(500 / portTICK_PERIOD_MS);
+  //     xSemaphoreGive(firebaseMutex);
+  //   }
+
+  //   vTaskDelayUntil(&lastWakeTime, delayTicks);
+  // }
+}
+
+// Hàm xử lý dữ liệu radar
+void handleRadarData() {
+  int radarStatus = digitalRead(OUT_PIN);
+  if (Firebase.setInt(firebaseData, "/HLK_RADAR/status", radarStatus)) {
+    Serial.printf("Radar state updated successfully: %d\n", radarStatus);
+  } else {
+    Serial.printf("Failed to update radar state: %s\n", firebaseData.errorReason().c_str());
+  }
+}
+
+// Hàm xử lý dữ liệu nhiệt độ
+void handleTemperatureData() {
+  sensors1.requestTemperatures();
+  sensors2.requestTemperatures();
+  sensors3.requestTemperatures();
+  sensors4.requestTemperatures();
+
+  float temps[4] = {
+    sensors1.getTempCByIndex(0),
+    sensors2.getTempCByIndex(0),
+    sensors3.getTempCByIndex(0),
+    sensors4.getTempCByIndex(0)
+  };
+
+  for (int i = 0; i < 4; i++) {
+    if (!isnan(temps[i])) {
+      String tempPath = "/Temperatures/computer" + String(i + 1) + "/temperature";
+      if (Firebase.setFloat(firebaseData, tempPath, temps[i])) {
+        Serial.printf("Temperature of computer %d sent successfully: %.2f\n", i + 1, temps[i]);
+      } else {
+        Serial.printf("Failed to send temperature of computer %d: %s\n", i + 1, firebaseData.errorReason().c_str());
+      }
+    }
+  }
+}
+
+// Hàm xử lý dữ liệu PZEM
+void handlePZEMData() {
+  float voltage = pzem.voltage();
+  float current = pzem.current();
+  float frequency = pzem.frequency();
+  float power = pzem.power();
+  float energy = pzem.energy();
+  if (!isnan(voltage)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/voltage", voltage);
+  if (!isnan(current)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/current", current);
+  if (!isnan(frequency)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/frequency", frequency);
+  if (!isnan(power)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/power", power);
+  if (!isnan(energy)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/energy", energy);
+
+  Serial.printf("PZEM Data sent: Voltage=%.2fV, Current=%.2fA, Frequency=%.2fHz, Power=%.2fW, Energy=%.2fkWh\n", voltage, current, frequency, power, energy);
+}
+
+
+
+
+
 // void TaskUploadHLK(void* pvParameters) {
 //   pinMode(OUT_PIN, INPUT_PULLDOWN);
 //   while(1) {
@@ -218,159 +386,6 @@
 //   preferences.end();
 // }
 
-
-// code mới code ok của ngày hôm nay
-void TaskUploadHLK(void* pvParameters) {
-  // Cấu hình pin radar
-  // pinMode(OUT_PIN, INPUT_PULLDOWN);
-
-  TickType_t lastWakeTime = xTaskGetTickCount();       // Lưu thời gian bắt đầu task
-  const TickType_t delayTicks = pdMS_TO_TICKS(25000);  // Chu kỳ thực thi: 20 giây
-
-  // Mở Preferences để lưu trạng thái `lastSentDay`
-  Preferences preferencesDay;
-  preferencesDay.begin("energy-data", false);
-
-  // Lấy thông tin ngày lưu trữ lần trước
-  int lastSentDay = preferencesDay.getInt("lastSentDay", -1);
-  int lastSentMonth = preferencesDay.getInt("lastSentMonth", -1);
-  int lastSentYear = preferencesDay.getInt("lastSentYear", -1);
-  // biến này để test chức năng gửi theo ngày
-  // lastSentDay = lastSentDay -2 ;
-  // preferencesDay.putInt("lastSentDay", lastSentDay);
-  // Serial.println("in ngay thang nam lan trước");
-  // Serial.println(lastSentDay);
-  // Serial.println(lastSentMonth);
-  // Serial.println(lastSentYear);
-
-  // ----- GỬI `totalEnergy` MỘT LẦN MỖI NGÀY -----
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    int currentDay = timeinfo.tm_mday;          // Lấy ngày hiện tại
-    int currentMonth = timeinfo.tm_mon + 1;     // Lấy tháng hiện tại (1-12)
-    int currentYear = timeinfo.tm_year + 1900;  // Lấy năm hiện tại (tính từ 1900)
-    // Serial.println("in ngay thang nam lan trước");
-    // Serial.println(lastSentDay);
-    // Serial.println(lastSentMonth);
-    // Serial.println(lastSentYear);
-    // Serial.println("in ngay thang nam hom nay");
-    // Serial.println(currentDay);
-    // Serial.println(currentMonth);
-    // Serial.println(currentYear);
-
-    // So sánh ngày, tháng, năm
-    if (currentDay != lastSentDay || currentMonth != lastSentMonth || currentYear != lastSentYear) {
-      // Nếu là ngày mới hoặc năm mới
-      if (currentYear > lastSentYear) {
-        // Reset năng lượng PZEM nếu là năm mới
-        pzem.resetEnergy();
-        Serial.println("Reset PZEM energy data for the new year.");
-      }
-
-      // Cập nhật ngày, tháng, năm đã gửi
-      lastSentDay = currentDay;
-      lastSentMonth = currentMonth;
-      lastSentYear = currentYear;
-
-      preferencesDay.putInt("lastSentDay", lastSentDay);
-      preferencesDay.putInt("lastSentMonth", lastSentMonth);
-      preferencesDay.putInt("lastSentYear", lastSentYear);
-
-      // Gửi dữ liệu năng lượng tích lũy
-      float totalEnergy = pzem.energy();
-      if (isnan(totalEnergy)) totalEnergy = 0;
-
-      if (!isnan(totalEnergy)  ) {
-        String currentTime = getCurrentTime();
-        String energyPath = "/Energy_use/" + currentTime + "/totalEnergy";
-        if (Firebase.setFloat(firebaseData, energyPath, totalEnergy)) {
-          Serial.printf("Total Energy sent: %.2f kWh\n", totalEnergy);
-        } else {
-          Serial.printf("Failed to send total energy: %s\n", firebaseData.errorReason().c_str());
-        }
-      }
-    } else {
-      Serial.println("Total Energy already sent for today. Skipping...");
-    }
-  } else {
-    Serial.println("Failed to get current time for totalEnergy update.");
-  }
-  preferencesDay.end();
-
-
-  while (1) {
-    Serial.print("sensor core: ");
-    Serial.println(xPortGetCoreID());
-    // ----- ĐỌC VÀ GỬI TRẠNG THÁI RADAR -----
-    handleRadarData();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    // ----- ĐỌC VÀ GỬI NHIỆT ĐỘ -----
-    handleTemperatureData();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    // ----- ĐỌC VÀ GỬI DỮ LIỆU PZEM -----
-    handlePZEMData();
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-
-    // Thực thi lại theo chu kỳ cố định
-    vTaskDelayUntil(&lastWakeTime, delayTicks);
-  }
-
-  // Đóng Preferences trước khi kết thúc task
-  // preferencesDay.end();
-}
-
-// Hàm xử lý dữ liệu radar
-void handleRadarData() {
-  int radarStatus = digitalRead(OUT_PIN);
-  if (Firebase.setInt(firebaseData, "/HLK_RADAR/status", radarStatus)) {
-    Serial.printf("Radar state updated successfully: %d\n", radarStatus);
-  } else {
-    Serial.printf("Failed to update radar state: %s\n", firebaseData.errorReason().c_str());
-  }
-}
-
-// Hàm xử lý dữ liệu nhiệt độ
-void handleTemperatureData() {
-  sensors1.requestTemperatures();
-  sensors2.requestTemperatures();
-  sensors3.requestTemperatures();
-  sensors4.requestTemperatures();
-
-  float temps[4] = {
-    sensors1.getTempCByIndex(0),
-    sensors2.getTempCByIndex(0),
-    sensors3.getTempCByIndex(0),
-    sensors4.getTempCByIndex(0)
-  };
-
-  for (int i = 0; i < 4; i++) {
-    if (!isnan(temps[i])) {
-      String tempPath = "/Temperatures/computer" + String(i + 1) + "/temperature";
-      if (Firebase.setFloat(firebaseData, tempPath, temps[i])) {
-        Serial.printf("Temperature of computer %d sent successfully: %.2f\n", i + 1, temps[i]);
-      } else {
-        Serial.printf("Failed to send temperature of computer %d: %s\n", i + 1, firebaseData.errorReason().c_str());
-      }
-    }
-  }
-}
-
-// Hàm xử lý dữ liệu PZEM
-void handlePZEMData() {
-  float voltage = pzem.voltage();
-  float current = pzem.current();
-  float frequency = pzem.frequency();
-  float power = pzem.power();
-  float energy = pzem.energy();
-  if (!isnan(voltage)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/voltage", voltage);
-  if (!isnan(current)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/current", current);
-  if (!isnan(frequency)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/frequency", frequency);
-  if (!isnan(power)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/power", power);
-  if (!isnan(energy)) Firebase.setFloat(firebaseData, "/PZEM_Voltage/energy", energy);
-
-  Serial.printf("PZEM Data sent: Voltage=%.2fV, Current=%.2fA, Frequency=%.2fHz, Power=%.2fW, Energy=%.2fkWh\n", voltage, current, frequency, power, energy);
-}
 
 
 // code mới 28/11 chia ra 3 task nhưng chạy bị lỗi--------------------------------------------------------------------------------------------------
