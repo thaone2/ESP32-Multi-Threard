@@ -56,8 +56,9 @@ void TaskUploadHLK(void* pvParameters) {
 
 
   for (;;) {
+     // Kiểm tra kết nối Wi-Fi trước khi bắt đầu điều khiển relay
+    checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
     if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
-
       Serial.print("sensor core: ");
       Serial.println(xPortGetCoreID());
       // ----- ĐỌC VÀ GỬI TRẠNG THÁI RADAR -----

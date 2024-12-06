@@ -148,27 +148,6 @@ void setup() {
     1,                   // Priority
     &firebaseTaskHandle  // Task handle
   );
-
-
-
-  // xTaskCreatePinnedToCore(
-  //   TaskControlRelayMode,    // Task function
-  //   "TaskControlRelayMode",  // Name of task
-  //   40192,                   // Stack size
-  //   NULL,                    // Task input parameter
-  //   1,                       // Priority
-  //   &relayTaskHandle,        // Task handle
-  //   0                        // Core 1
-  // );
-  // xTaskCreatePinnedToCore(
-  //   TaskUploadHLK,        // Task function
-  //   "TaskUploadHLK",      // Name of task
-  //   40192,                // Stack size
-  //   NULL,                 // Task input parameter
-  //   0,                    // Priority
-  //   &firebaseTaskHandle,  // Task handle
-  //   1                     // Core 0
-  // );
 }
 
 //1.0 Hàm khởi tạo thời gian
@@ -502,10 +481,27 @@ void updateRelayOnCountsToFirebase(int counts[]) {
   }
 }
 
-//1.10 Hàm điều khiển Relay
+//1.10 Hàm kiểm tra kết nối Wi-Fi và tự động kết nối lại nếu cần
+void checkWiFiConnection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Wi-Fi disconnected, attempting to reconnect...");
+    WiFi.reconnect();  // Gọi lại Wi-Fi nếu bị mất kết nối
+    
+    // Đợi một chút để Wi-Fi ổn định lại
+    while (WiFi.status() != WL_CONNECTED) {
+      Serial.print(".");
+      delay(1000);  // Đợi 1 giây để kết nối lại
+    }
+    Serial.println("Wi-Fi reconnected! OK");
+  }
+}
+
+
+//1.11 Hàm điều khiển Relay
 void TaskControlRelayMode(void* pvParameters) {
   for (;;) {
-
+     // Kiểm tra kết nối Wi-Fi trước khi bắt đầu điều khiển relay
+    checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
     if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
       Serial.print("Free heap: ");
       Serial.println(esp_get_free_heap_size());
@@ -535,7 +531,6 @@ void TaskControlRelayMode(void* pvParameters) {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
 }
-
 
 
 // void TaskControlRelayMode(void* pvParameters) {
@@ -574,7 +569,6 @@ void TaskControlRelayMode(void* pvParameters) {
 //     vTaskDelay(3500 / portTICK_PERIOD_MS);  // Đợi 3.5 giây trước khi lặp lại
 //   }
 // }
-
 
 
 void loop() {
