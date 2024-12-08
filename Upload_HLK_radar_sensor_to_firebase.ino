@@ -177,6 +177,43 @@ void sendEnergyDataOncePerDay() {
   }
 }
 
+// 2.6 Hàm gửi dữ liệu nhiệt độ mỗi 30p
+void sendTemperatureAfter30Minutes() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to get local time.");
+  }
+
+  // Lấy ngày hiện tại
+  char currentTimeStr[20];
+  snprintf(currentTimeStr, sizeof(currentTimeStr), "%04d-%02d-%02d_%02d:%02d:%02d",
+           timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+  sensors1.requestTemperatures();
+  sensors2.requestTemperatures();
+  sensors3.requestTemperatures();
+  sensors4.requestTemperatures();
+
+  float temps[4] = {
+    sensors1.getTempCByIndex(0),
+    sensors2.getTempCByIndex(0),
+    sensors3.getTempCByIndex(0),
+    sensors4.getTempCByIndex(0)
+  };
+  for (int i = 0; i < 4; i++) {
+    if (!isnan(temps[i])) {
+      String tempPath = "/Temperatures_30/" + String(currentTimeStr) + "/computer" + String(i + 1) + "/temperature";
+      if (Firebase.setFloat(firebaseData, tempPath, temps[i])) {
+        Serial.printf("2.6 Temperature of computer %d sent successfully: %.2f\n", i + 1, temps[i]);
+      } else {
+        // Serial.printf("Failed to send temperature of computer %d: %s\n", i + 1, firebaseData.errorReason().c_str());
+        Serial.printf("2.6 Failed to send temperature of computer: function sendTemperatureAfter30Minutes");
+      }
+    }
+  }
+}
+
 
 
 

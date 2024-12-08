@@ -73,11 +73,22 @@ int relays[] = { RELAY_1_PIN, RELAY_2_PIN, RELAY_3_PIN, RELAY_4_PIN };
 // Task handles
 TaskHandle_t firebaseTaskHandle;
 TaskHandle_t relayTaskHandle;
+TaskHandle_t temperaturesTaskHandle;
 
 // semaphore
 SemaphoreHandle_t relayMutex;
 // SemaphoreHandle_t firebaseMutex;
 // SemaphoreHandle_t relayMutex1;
+
+// Khai báo Timer
+// TimerHandle_t temperatureTimer;
+
+// Use only core 1
+#if CONFIG_FREERTOS_UNICORE
+static const BaseType_t app_cpu = 0;
+#else
+static const BaseType_t app_cpu = 1;
+#endif
 
 void setup() {
   Serial.begin(115200);                            // giao tiếp với serial monitor
@@ -131,23 +142,69 @@ void setup() {
   //   Serial.println("Failed to create mutex!");
   // }
 
+  // Khởi tạo Timer
+  // Tạo Timer với khoảng thời gian 30 phút (1800000ms)
+  // temperatureTimer = xTimerCreate(
+  //   "TemperatureTimer",      // Tên Timer
+  //   pdMS_TO_TICKS(30000),  // Thời gian: 30 phút
+  //   pdTRUE,                  // Tự động lặp lại
+  //   NULL,                    // ID (không cần)
+  //   sendTemperatureCallback  // Hàm callback
+  // );
+
+  // if (temperatureTimer != NULL) {
+  //   xTimerStart(temperatureTimer, 0);  // Bắt đầu Timer
+  //   Serial.println("Temperature Timer started!");
+  // } else {
+  //   Serial.println("Failed to create Timer!");
+  // }
+
+
   // Tạo các task
-  xTaskCreate(
-    TaskControlRelayMode,    // Task function
-    "TaskControlRelayMode",  // Name of task
-    54192,                   // Stack size
-    NULL,                    // Task input parameter
-    2,                       // Priority
-    &relayTaskHandle         // Task handle
-  );
-  xTaskCreate(
-    TaskUploadHLK,       // Task function
-    "TaskUploadHLK",     // Name of task
-    54192,               // Stack size
-    NULL,                // Task input parameter
-    1,                   // Priority
-    &firebaseTaskHandle  // Task handle
-  );
+  // xTaskCreate(
+  //   TaskControlRelayMode,    // Task function
+  //   "TaskControlRelayMode",  // Name of task
+  //   84192,                   // Stack size
+  //   NULL,                    // Task input parameter
+  //   2,                       // Priority
+  //   &relayTaskHandle         // Task handle
+  // );
+  // xTaskCreate(
+  //   TaskUploadHLK,       // Task function
+  //   "TaskUploadHLK",     // Name of task
+  //   54192,               // Stack size
+  //   NULL,                // Task input parameter
+  //   1,                   // Priority
+  //   &firebaseTaskHandle  // Task handle
+  // );
+
+  // Task to run forever
+  xTaskCreatePinnedToCore(     // Use xTaskCreate() in vanilla FreeRTOS
+    TaskControlRelayMode,      // Function to be called
+    "TaskControlRelayMode",    // Name of task
+    84192,                     // Stack size (bytes in ESP32, words in FreeRTOS)
+    NULL,                      // Parameter to pass to function
+    configMAX_PRIORITIES - 1,  // Task priority (0 to to configMAX_PRIORITIES - 1)
+    &relayTaskHandle,          // Task handle
+    app_cpu);                  // Run on one core for demo purposes (ESP32 only)
+
+  xTaskCreatePinnedToCore(  // Use xTaskCreate() in vanilla FreeRTOS
+    TaskUploadHLK,          // Function to be called
+    "TaskUploadHLK",        // Name of task
+    54192,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+    NULL,                   // Parameter to pass to function
+    1,                      // Task priority (0 to to configMAX_PRIORITIES - 1)
+    &relayTaskHandle,       // Task handle
+    app_cpu);               // Run on one core for demo purposes (ESP32 only)
+
+  xTaskCreatePinnedToCore(            // Use xTaskCreate() in vanilla FreeRTOS
+    TaskUploadTemperatureAfter30M,    // Function to be called
+    "TaskUploadTemperatureAfter30M",  // Name of task
+    12192,                            // Stack size (bytes in ESP32, words in FreeRTOS)
+    NULL,                             // Parameter to pass to function
+    1,                                // Task priority (0 to to configMAX_PRIORITIES - 1)
+    &temperaturesTaskHandle,          // Task handle
+    app_cpu);                         // Run on one core for demo purposes (ESP32 only)
 }
 
 //1.0 Hàm khởi tạo thời gian
@@ -270,7 +327,7 @@ void controlComputersManually() {
     }
   }
 
-  Serial.printf("1.4 Trạng thái relay sau xử lý: %d %d %d %d\n",relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
+  Serial.printf("1.4 Trạng thái relay sau xử lý: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
 }
 
 // 1.5 Mảng chứa tổ hợp relay đã được định nghĩa trước 12 34 23 14 13 24
@@ -418,6 +475,23 @@ void TaskControlRelayMode(void* pvParameters) {
     vTaskDelay(3000 / portTICK_PERIOD_MS);
   }
 }
+
+void TaskUploadTemperatureAfter30M(void* pvParameters) {
+  for (;;) {
+    checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
+    if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+      sendTemperatureAfter30Minutes();
+      Serial.println("3.0----------------TaskUploadTemperatureAfter30M: Accessing relay.");
+      xSemaphoreGive(relayMutex);
+    }
+    vTaskDelay(1800000 / portTICK_PERIOD_MS);
+  }
+}
+
+// 1.12 Hàm callback Timer
+// void sendTemperatureCallback(TimerHandle_t xTimer) {
+//   sendTemperatureAfter30Minutes();
+// }
 
 void loop() {
 }
