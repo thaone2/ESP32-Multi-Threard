@@ -12,7 +12,8 @@
 #define FIREBASE_HOST "https://todolistapp-408f2-default-rtdb.asia-southeast1.firebasedatabase.app/"
 #define FIREBASE_AUTH "iej75ZGaEnpVDwfR67qv82qSa7GNq60DJf9AO5ig"
 
-#define WIFI_SSID "Camera1"
+// #define WIFI_SSID "Camera1"
+#define WIFI_SSID "Ngoc Van"
 #define WIFI_PASSWORD "22052020"
 
 // #define SHUTDOWN_TIMEOUT (900000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
@@ -31,10 +32,10 @@ const int serverPort = 8080;
 HardwareSerial hlkSerial(1);
 
 // Cảm biến DS18B20
-#define OUT_TEM_1 12  // Pin for the DS18B20 c1 la 13
-#define OUT_TEM_2 12  // Pin for the DS18B20 c2 la 12
-#define OUT_TEM_3 12  // Pin for the DS18B20 c3 la 14
-#define OUT_TEM_4 12  // Pin for the DS18B20 c4 la 27
+#define OUT_TEM_1 13  // Pin for the DS18B20 c1 la 13
+#define OUT_TEM_2 13  // Pin for the DS18B20 c2 la 12 Chân 12 bị lỗi nên đổi sang chân 33
+#define OUT_TEM_3 13  // Pin for the DS18B20 c3 la 14
+#define OUT_TEM_4 13  // Pin for the DS18B20 c4 la 27
 OneWire oneWire1(OUT_TEM_1);
 OneWire oneWire2(OUT_TEM_2);
 OneWire oneWire3(OUT_TEM_3);
@@ -232,6 +233,16 @@ String getCurrentTime() {
   }
   char timeString[20];
   strftime(timeString, sizeof(timeString), "%Y-%m-%d_%H:%M:%SS", &timeinfo);  // Định dạng thời gian
+  return String(timeString);
+}
+
+String getCurrentDate() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return "1.1xxx Lỗi không lấy được thời gian ở hàm getCurrentDate";
+  }
+  char timeString[20];
+  strftime(timeString, sizeof(timeString), "%Y-%m-%d", &timeinfo);  // Định dạng thời gian
   return String(timeString);
 }
 
