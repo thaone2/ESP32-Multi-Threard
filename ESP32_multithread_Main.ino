@@ -56,13 +56,13 @@ FirebaseAuth auth;
 FirebaseConfig config;
 
 Preferences preferencesBootCount;
+Preferences preferencesOnCount;
 
 // Relay
 #define RELAY_1_PIN 5   // GPIO18 cho relay 1 (máy tính 1)
 #define RELAY_2_PIN 18  // GPIO19 cho relay 2 (máy tính 2)
 #define RELAY_3_PIN 19  // GPIO21 cho relay 3 (máy tính 3)
 #define RELAY_4_PIN 21  // GPIO22 cho relay 4 (máy tính 4)
-
 
 bool isAutoMode = false;
 bool manualToAutoSwitch = false;
@@ -78,11 +78,6 @@ TaskHandle_t temperaturesTaskHandle;
 
 // semaphore
 SemaphoreHandle_t relayMutex;
-// SemaphoreHandle_t firebaseMutex;
-// SemaphoreHandle_t relayMutex1;
-
-// Khai báo Timer
-// TimerHandle_t temperatureTimer;
 
 // Use only core 1
 #if CONFIG_FREERTOS_UNICORE
@@ -126,64 +121,27 @@ void setup() {
   // firebase
   config.host = FIREBASE_HOST;
   config.signer.tokens.legacy_token = FIREBASE_AUTH;
+
+  // Thiết lập thời gian chờ cho firebase
+  config.timeout.serverResponse = 15000;    // 15 giây
+  config.timeout.socketConnection = 15000;  // 15 giây
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 
-  //Khởi tạo semaphore
+  // Lấy trạng thái relayOnCounts 
+  downloadRelayCountFirebase();
+
+  //Khởi tạo semaphore mutex
   relayMutex = xSemaphoreCreateMutex();  // Khởi tạo mutex
   if (relayMutex == NULL) {
     Serial.println("Failed to create mutex");
   }
-  // relayMutex1 = xSemaphoreCreateMutex();
-  // if (relayMutex1 == NULL) {
-  //   Serial.println("Failed to create mutex!");
-  // }
-  // firebaseMutex = xSemaphoreCreateMutex();
-  // if (firebaseMutex == NULL) {
-  //   Serial.println("Failed to create mutex!");
-  // }
-
-  // Khởi tạo Timer
-  // Tạo Timer với khoảng thời gian 30 phút (1800000ms)
-  // temperatureTimer = xTimerCreate(
-  //   "TemperatureTimer",      // Tên Timer
-  //   pdMS_TO_TICKS(30000),  // Thời gian: 30 phút
-  //   pdTRUE,                  // Tự động lặp lại
-  //   NULL,                    // ID (không cần)
-  //   sendTemperatureCallback  // Hàm callback
-  // );
-
-  // if (temperatureTimer != NULL) {
-  //   xTimerStart(temperatureTimer, 0);  // Bắt đầu Timer
-  //   Serial.println("Temperature Timer started!");
-  // } else {
-  //   Serial.println("Failed to create Timer!");
-  // }
-
-
-  // Tạo các task
-  // xTaskCreate(
-  //   TaskControlRelayMode,    // Task function
-  //   "TaskControlRelayMode",  // Name of task
-  //   84192,                   // Stack size
-  //   NULL,                    // Task input parameter
-  //   2,                       // Priority
-  //   &relayTaskHandle         // Task handle
-  // );
-  // xTaskCreate(
-  //   TaskUploadHLK,       // Task function
-  //   "TaskUploadHLK",     // Name of task
-  //   54192,               // Stack size
-  //   NULL,                // Task input parameter
-  //   1,                   // Priority
-  //   &firebaseTaskHandle  // Task handle
-  // );
 
   // Task to run forever
   xTaskCreatePinnedToCore(     // Use xTaskCreate() in vanilla FreeRTOS
     TaskControlRelayMode,      // Function to be called
     "TaskControlRelayMode",    // Name of task
-    84192,                     // Stack size (bytes in ESP32, words in FreeRTOS)
+    54192,                     // Stack size (bytes in ESP32, words in FreeRTOS)
     NULL,                      // Parameter to pass to function
     configMAX_PRIORITIES - 1,  // Task priority (0 to to configMAX_PRIORITIES - 1)
     &relayTaskHandle,          // Task handle
@@ -192,7 +150,7 @@ void setup() {
   xTaskCreatePinnedToCore(  // Use xTaskCreate() in vanilla FreeRTOS
     TaskUploadHLK,          // Function to be called
     "TaskUploadHLK",        // Name of task
-    54192,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+    34192,                  // Stack size (bytes in ESP32, words in FreeRTOS)
     NULL,                   // Parameter to pass to function
     1,                      // Task priority (0 to to configMAX_PRIORITIES - 1)
     &relayTaskHandle,       // Task handle
@@ -208,7 +166,7 @@ void setup() {
     app_cpu);                         // Run on one core for demo purposes (ESP32 only)
 }
 
-//1.0 Hàm khởi tạo thời gian
+// 1.0 Hàm khởi tạo thời gian
 bool setupTime() {
   // Thiết lập múi giờ Việt Nam (GMT+7)
   configTime(25200, 0, "pool.ntp.org", "time.nist.gov");
@@ -218,14 +176,13 @@ bool setupTime() {
     Serial.println("1.0 Lỗi: Không thể lấy thời gian!");
     return false;  // Trả về false nếu thất bại
   }
-
   // In thời gian hiện tại nếu thành công
   Serial.print("1.0 Lấy thời gian thành công: ");
   Serial.println(&timeinfo, "Current time: %Y-%m-%d_%H:%M:%S");
   return true;  // Trả về true nếu thành công
 }
 
-//1.1 Hàm lấy thời gian
+// 1.1 Hàm lấy thời gian định dạng: năm - tháng - ngày - thời gian
 String getCurrentTime() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
@@ -236,29 +193,64 @@ String getCurrentTime() {
   return String(timeString);
 }
 
+// 1.2 Hàm lấy thời gian định dạng: năm - tháng - ngày
 String getCurrentDate() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
-    return "1.1xxx Lỗi không lấy được thời gian ở hàm getCurrentDate";
+    return "1.2 Lỗi không lấy được thời gian ở hàm getCurrentDate";
   }
   char timeString[20];
   strftime(timeString, sizeof(timeString), "%Y-%m-%d", &timeinfo);  // Định dạng thời gian
   return String(timeString);
 }
 
+// 1.3 Hàm get số lần bật tắt máy ban đầu
+void downloadRelayCountFirebase() {
+  String today = getCurrentDate();
+  if (today == "") {
+    Serial.println("1.3 Failed to get current date!");
+    return;
+  }
+  String path = "/ComputerOnCount/" + today;
+  if (Firebase.get(firebaseData, path)) {
+    if (firebaseData.dataType() == "json") {
+      FirebaseJson &json = firebaseData.jsonObject();
+      FirebaseJsonData jsonData;
+      // Duyệt qua từng phần tử để cập nhật relayOnCounts
+      for (int i = 0; i < 4; i++) {
+        String key = "computer" + String(i + 1) + "/onCount";
+        if (json.get(jsonData, key)) {
+          relayOnCounts[i] = jsonData.intValue;
+        } else {
+          Serial.printf("Failed to get %s\n", key.c_str());
+        }
+      }
+      // In kết quả ra Serial để kiểm tra
+      Serial.print("1.3 Updated relayOnCounts: ");
+      for (int i = 0; i < 4; i++) {
+        Serial.print(relayOnCounts[i]);
+        Serial.print(" ");
+      }
+    } else {
+      Serial.println("1.3 Data type mismatch or no data!");
+    }
+  } else {
+    Serial.printf("1.3 Failed to get data from Firebase: %s\n", firebaseData.errorReason().c_str());
+  }
+}
 
-// 1.2 v2 Hàm get trạng thái auto trên firebase
+// 1.4 Hàm get trạng thái auto trên firebase
 bool getAuto() {
   checkWiFiConnection();  // Kiểm tra kết nối Wi-Fi
   if (Firebase.getBool(firebaseData, "/isAuto/status")) {
     return firebaseData.boolData();
   } else {
-    Serial.printf("1.2 Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
+    Serial.printf("1.4 Failed to get auto mode: %s\n", firebaseData.errorReason().c_str());
     return false;
   }
 }
 
-//1.3 Hàm kiểm tra cảm biến radar và điều khiển relay ở chế độ Auto sử dụng tick cho rtos
+// 1.5 Hàm kiểm tra cảm biến radar và điều khiển relay ở chế độ Auto sử dụng tick cho rtos
 void controlComputersForRadar() {
   static TickType_t lastDetectionTime = 0;       // Thời gian cuối cùng phát hiện người (ticks)
   TickType_t currentTime = xTaskGetTickCount();  // Thời gian hiện tại (ticks)
@@ -275,10 +267,10 @@ void controlComputersForRadar() {
           }
         }
         if (allRelaysOff) {
-          Serial.println("1.3 Hệ thống đang ở chế độ auto, bật lại hai máy tính ngẫu nhiên.");
+          Serial.println("1.5 Hệ thống đang ở chế độ auto, bật lại hai máy tính ngẫu nhiên.");
           OnRelay();  // Hàm bật ngẫu nhiên hai máy tính
         } else {
-          Serial.println("1.3 Có máy tính đang bật, không cần thực hiện bật lại.");
+          Serial.println("1.5 Có máy tính đang bật, không cần thực hiện bật lại.");
         }
         manualToAutoSwitch = false;  // Cập nhật trạng thái chuyển đổi
       }
@@ -288,7 +280,7 @@ void controlComputersForRadar() {
     if (isAutoMode) {                 // Chỉ xử lý nếu đang ở chế độ auto
       // Kiểm tra nếu không có người trong khoảng thời gian timeout
       if ((currentTime - lastDetectionTime) >= SHUTDOWN_TIMEOUT) {
-        Serial.println("1.3 Không phát hiện người trong thời gian dài, tắt tất cả máy tính.");
+        Serial.println("1.5 Không phát hiện người trong thời gian dài, tắt tất cả máy tính.");
         // Tắt từng máy tính và relay
         for (int i = 0; i < 4; i++) {
           if (relayStates[i]) {  // Chỉ tắt nếu relay đang bật
@@ -303,11 +295,10 @@ void controlComputersForRadar() {
   }
   updateRelayStatesToFirebase(relayStates);
   updateRelayOnCountsToFirebase(relayOnCounts);
-  Serial.printf("1.3 Điều khiển máy tính bởi radar: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
+  Serial.printf("1.5 Điều khiển máy tính bởi radar: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
 }
 
-//1.4 Hàm điều khiển relay theo lệnh từ Firebase ở chế độ Manual
-// version2
+// 1.6 Hàm điều khiển relay theo lệnh từ Firebase ở chế độ Manual version2
 void controlComputersManually() {
   checkWiFiConnection();  // Kiểm tra kết nối Wi-Fi
   for (int i = 0; i < 4; i++) {
@@ -318,30 +309,31 @@ void controlComputersManually() {
     int relayState = success ? firebaseData.intData() : -1;
 
     if (!success) {
-      Serial.printf("1.4 Không đọc được trạng thái relay %d từ Firebase. Lý do: %s\n", i + 1, firebaseData.errorReason().c_str());
+      Serial.printf("1.6 Không đọc được trạng thái relay %d từ Firebase. Lý do: %s\n", i + 1, firebaseData.errorReason().c_str());
       checkWiFiConnection();  // Kiểm tra lại Wi-Fi nếu thất bại
       continue;               // Bỏ qua relay này
     }
     // Kiểm tra và thay đổi trạng thái relay nếu cần
     if (relayState == 1 && !relayStates[i]) {
-      Serial.printf("1.4 Bật relay %d thủ công.\n", i + 1);
+      Serial.printf("1.6 Bật relay %d thủ công.\n", i + 1);
       digitalWrite(relays[i], LOW);  // Kích relay
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       digitalWrite(relays[i], HIGH);  // Ngắt relay
       relayStates[i] = true;          // Cập nhật trạng thái relay
+      relayOnCounts[i]++;             // Tăng số lần bật relay
+      updateRelayOnCountsToFirebase(relayOnCounts);
     } else if (relayState == 0 && relayStates[i]) {
-      Serial.printf("1.4 Tắt relay %d thủ công.\n", i + 1);
+      Serial.printf("1.6 Tắt relay %d thủ công.\n", i + 1);
       shutdownServer(serverIPs[i], i);  // Gửi lệnh shutdown
       vTaskDelay(2000 / portTICK_PERIOD_MS);
       digitalWrite(relays[i], HIGH);  // Ngắt relay
       relayStates[i] = false;         // Cập nhật trạng thái relay
     }
   }
-
-  Serial.printf("1.4 Trạng thái relay sau xử lý: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
+  Serial.printf("1.6 Trạng thái relay sau xử lý: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
 }
 
-// 1.5 Mảng chứa tổ hợp relay đã được định nghĩa trước 12 34 23 14 13 24
+// 1.7 Mảng chứa tổ hợp relay đã được định nghĩa trước 12 34 23 14 13 24
 const int predefinedCombinations[6][2] = {
   { 0, 1 },  // Relay 1 & Relay 2
   { 2, 3 },  // Relay 3 & Relay 4
@@ -352,12 +344,12 @@ const int predefinedCombinations[6][2] = {
 };
 const int totalCombinations = 6;  // Tổng số tổ hợp
 
-// 1.6v2 Hàm bật ngẫu nhiên 2 máy tính
+// 1.8 Hàm bật ngẫu nhiên 2 máy tính
 void OnRelay() {
   // Mở bộ nhớ Preferences để đọc lại giá trị trước đó khi relay tắt điện
   preferencesBootCount.begin("relay-app", false);               // Mở "relay-app" trong bộ nhớ, chế độ read/write
   int bootCount = preferencesBootCount.getInt("bootCount", 0);  // Đọc giá trị "bootCount" từ Preferences (mặc định 0)
-  Serial.printf("1.6 Boot count: %d\n", bootCount);
+  Serial.printf("1.8 Boot count: %d\n", bootCount);
   // Gọi hàm bật relay theo số lần khởi động hiện tại (bật 2 relay theo tổ hợp)
   turnOnRelaysByCombination(bootCount % totalCombinations);  // Giới hạn tới totalCombinations
   bootCount++;                                               // Tăng số lần khởi động cho lần tiếp theo
@@ -368,10 +360,10 @@ void OnRelay() {
   preferencesBootCount.end();                           // Đóng Preferences
 }
 
-//1.7v2 Hàm bật relay theo cặp giảm thiểu bộ nhớ
+// 1.9v2 Hàm bật relay theo cặp giảm thiểu bộ nhớ
 void turnOnRelaysByCombination(int bootCount) {
   if (bootCount < 0 || bootCount >= totalCombinations) {  // Kiểm tra bootCount hợp lệ
-    Serial.println("Invalid boot count");
+    Serial.println("1.9 Invalid boot count");
     return;
   }
 
@@ -382,7 +374,7 @@ void turnOnRelaysByCombination(int bootCount) {
   if (!relayStates[relay1]) {
     digitalWrite(relays[relay1], LOW);
     relayOnCounts[relay1]++;
-    Serial.printf("1.7 Turned on relay %d\n", relay1 + 1);
+    Serial.printf("1.9 Turned on relay %d\n", relay1 + 1);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     digitalWrite(relays[relay1], HIGH);
     relayStates[relay1] = true;
@@ -392,122 +384,156 @@ void turnOnRelaysByCombination(int bootCount) {
   if (!relayStates[relay2]) {
     digitalWrite(relays[relay2], LOW);
     relayOnCounts[relay2]++;
-    Serial.printf("1.7 Turned on relay %d\n", relay2 + 1);
+    Serial.printf("1.9 Turned on relay %d\n", relay2 + 1);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     digitalWrite(relays[relay2], HIGH);
     relayStates[relay2] = true;
   }
-
   // Cập nhật trạng thái và số lần bật tắt lên Firebase
   updateRelayStatesToFirebase(relayStates);
   updateRelayOnCountsToFirebase(relayOnCounts);
 }
 
-//1.8 Hàm update trạng thái relay lên firebase
+// 1.10 Hàm update trạng thái relay lên firebase
 void updateRelayStatesToFirebase(bool status[]) {
   checkWiFiConnection();         // Kiểm tra kết nối Wi-Fi
   for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật trạng thái
     String relaySPath = "/Computer/computer" + String(i + 1) + "/status";
-    String relaySPath1 = "/Computerstatus/computer" + String(i + 1) + "/status";
     int relayState = status[i] ? 1 : 0;                           // Cập nhật trạng thái relay (1 = bật, 0 = tắt)
     if (Firebase.setInt(firebaseData, relaySPath, relayState)) {  // Gửi trạng thái lên Firebase cho relaySPath
       // Serial.printf("Relay %d status updated successfully at path: %s\n", i + 1, relaySPath.c_str());
     } else {
-      Serial.printf("1.8 Failed to update Relay %d status at path: %s. Error: %s\n", i + 1, relaySPath.c_str(), firebaseData.errorReason().c_str());
-    }
-    if (Firebase.setInt(firebaseData, relaySPath1, relayState)) {  // Gửi trạng thái lên Firebase cho relaySPath1
-      // Serial.printf("Relay %d status updated successfully at path: %s\n", i + 1, relaySPath1.c_str());
-    } else {
-      Serial.printf("1.8 Failed to update Relay %d status at path: %s. Error: %s\n", i + 1, relaySPath1.c_str(), firebaseData.errorReason().c_str());
+      Serial.printf("1.10 Failed to update Relay %d status at path: %s. Error: %s\n", i + 1, relaySPath.c_str(), firebaseData.errorReason().c_str());
     }
   }
-  Serial.printf("1.8 updateRelayStatesToFirebase success");
+  Serial.printf("1.10 updateRelayStatesToFirebase success");
 }
 
-//1.9 Hàm update số lần bật tắt máy lên firebase
+// 1.11 Hàm update số lần bật tắt máy lên firebase
 void updateRelayOnCountsToFirebase(int counts[]) {
-  checkWiFiConnection();         // Kiểm tra kết nối Wi-Fi
+  checkWiFiConnection();  // Kiểm tra kết nối Wi-Fi
+  String currentTime = getCurrentDate();
   for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật số lần bật
-    String relayCPath1 = "/Computerstatus/computer" + String(i + 1) + "/onCount";
+    String relayCPath1 = "/ComputerOnCount/" + String(currentTime) + "/computer" + String(i + 1) + "/onCount";
     if (Firebase.setInt(firebaseData, relayCPath1, counts[i])) {  // Gửi số lần bật lên Firebase cho relayPath1
-                                                                  // Serial.printf("Relay %d onCount updated successfully at path: %s\n", i + 1, relayCPath1.c_str());
+      // Serial.printf("1.11 Relay %d onCount updated successfully at path: %s\n", i + 1, relayCPath1.c_str());
     } else {
-      Serial.printf("1.9 Failed to update Relay %d onCount at path: %s. Error: %s\n", i + 1, relayCPath1.c_str(), firebaseData.errorReason().c_str());
+      Serial.printf("1.11 Failed to update Relay %d onCount at path: %s. Error: %s\n", i + 1, relayCPath1.c_str(), firebaseData.errorReason().c_str());
     }
   }
 }
 
-//1.10 Hàm kiểm tra kết nối Wi-Fi và tự động kết nối lại nếu cần
+// 1.12 Hàm kiểm tra kết nối Wi-Fi và tự động kết nối lại nếu cần
 void checkWiFiConnection() {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("1.10 Wi-Fi disconnected, attempting to reconnect...");
+    Serial.println("1.12 Wi-Fi disconnected, attempting to reconnect...");
     WiFi.reconnect();  // Gọi lại Wi-Fi nếu bị mất kết nối
-
-    // Đợi một chút để Wi-Fi ổn định lại
     while (WiFi.status() != WL_CONNECTED) {
       Serial.print(".");
       vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
-    Serial.println("1.10 Wi-Fi reconnected! OK");
+    Serial.println("1.12 Wi-Fi reconnected! OK");
   }
 }
 
-
-//1.11 Hàm điều khiển Relay
+// 1.13 Hàm điều khiển Relay
 void TaskControlRelayMode(void* pvParameters) {
   for (;;) {
     // Kiểm tra kết nối Wi-Fi trước khi bắt đầu điều khiển relay
     checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
     if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
-      Serial.print("1.11 Free heap: ");
+      Serial.print("1.13 Free heap: ");
       Serial.println(esp_get_free_heap_size());
-      Serial.print("1.11 relay core: ");
+      Serial.print("1.13 relay core: ");
       Serial.println(xPortGetCoreID());
 
       // Kiểm tra xem có ở chế độ tự động hay không
       if (getAuto()) {
-        Serial.println("1.11 Đang ở chế độ auto");
+        Serial.println("1.13 Đang ở chế độ auto");
 
         //Cập nhật trạng thái cho đúng về isAuto
         if (!isAutoMode) {
           isAutoMode = true;          // Chuyển sang chế độ auto
           manualToAutoSwitch = true;  // Đánh dấu vừa chuyển từ manual sang auto
         }
-        Serial.print("1.11 Điều khiển máy tính theo cảm biển radar ");
+        Serial.print("1.13 Điều khiển máy tính theo cảm biển radar ");
         controlComputersForRadar();  // Điều khiển relay theo radar
       } else {
         isAutoMode = false;
-        Serial.print("1.11 Đang ở chế độ thủ công");
+        Serial.print("1.13 Đang ở chế độ thủ công");
         controlComputersManually();  // Điều khiển relay thủ công
       }
-      Serial.println("1.11----------------TaskControlRelayMode: Accessing relay.");
+      Serial.println("1.13----------------TaskControlRelayMode: Accessing relay.");
       xSemaphoreGive(relayMutex);
     }
     vTaskDelay(3000 / portTICK_PERIOD_MS);
   }
 }
 
+// 1.14 Hàm upload nhiệt độ mỗi 30phuts
 void TaskUploadTemperatureAfter30M(void* pvParameters) {
   for (;;) {
     checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
     if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
       sendTemperatureAfter30Minutes();
-      Serial.println("3.0----------------TaskUploadTemperatureAfter30M: Accessing relay.");
+      Serial.println("1.14----------------TaskUploadTemperatureAfter30M: Accessing relay.");
       xSemaphoreGive(relayMutex);
     }
     vTaskDelay(1800000 / portTICK_PERIOD_MS);
   }
 }
 
-// 1.12 Hàm callback Timer
-// void sendTemperatureCallback(TimerHandle_t xTimer) {
-//   sendTemperatureAfter30Minutes();
-// }
-
 void loop() {
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+// void resetRelayCountsDaily() {
+//   // Lấy ngày hiện tại
+//   String today = getCurrentDate();
+//   if (today == "") {
+//     return;  // Không thể lấy thời gian
+//   }
+//   // Mở Preferences
+//   preferencesOnCount.begin("relay", false);
+//   // Đọc ngày lưu trữ từ bộ nhớ
+//   String savedDate = preferencesOnCount.getString("lastResetDate", "");
+//   Serial.println("saveDate: ");
+//   Serial.println(savedDate);
+//   // So sánh ngày hiện tại và ngày lưu trữ
+//   if (savedDate != today) {
+//     // Ngày đã thay đổi, reset mảng
+//     for (int i = 0; i < 4; i++) {
+//       relayOnCounts[i] = 0;
+//     }
+//     Serial.println("Relay counts reset!");
+//     // Lưu ngày hiện tại vào bộ nhớ
+//     preferencesOnCount.putString("lastResetDate", today);
+//   } else {
+//     Serial.println("Relay counts are up-to-date. No reset needed.");
+//   }
+//   // Đóng Preferences
+//   preferencesOnCount.end();
+// }
+
+// void loadRelayCounts() {
+//   // Khôi phục mảng từ Preferences khi khởi động
+//   preferencesOnCount.begin("relay", false);
+//   if (preferencesOnCount.isKey("relayCounts")) {
+//     preferencesOnCount.getBytes("relayCounts", relayOnCounts, sizeof(relayOnCounts));
+//   }
+//   preferencesOnCount.end();
+// }
 
 
 // #include <Arduino.h>
@@ -985,6 +1011,25 @@ void loop() {
 //   1                        // Core 1
 // );
 // vTaskDelay(500 / portTICK_PERIOD_MS);
+
+
+  // Tạo các task
+  // xTaskCreate(
+  //   TaskControlRelayMode,    // Task function
+  //   "TaskControlRelayMode",  // Name of task
+  //   84192,                   // Stack size
+  //   NULL,                    // Task input parameter
+  //   2,                       // Priority
+  //   &relayTaskHandle         // Task handle
+  // );
+  // xTaskCreate(
+  //   TaskUploadHLK,       // Task function
+  //   "TaskUploadHLK",     // Name of task
+  //   54192,               // Stack size
+  //   NULL,                // Task input parameter
+  //   1,                   // Priority
+  //   &firebaseTaskHandle  // Task handle
+  // );
 
 
 // xTaskCreate(TaskRadarData, "TaskRadarData", 8196, NULL, 0, NULL);

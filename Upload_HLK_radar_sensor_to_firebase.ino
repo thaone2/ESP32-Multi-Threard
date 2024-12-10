@@ -22,7 +22,7 @@ void TaskUploadHLK(void* pvParameters) {
     } else {
       Serial.println("2.1 Failed to acquire relayMutex for upload from Sensor update firebase. ");
     }
-    vTaskDelay(20000 / portTICK_PERIOD_MS);
+    vTaskDelay(30000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -131,17 +131,9 @@ void handlePZEMData() {
 
 // 2.5 Hàm kiểm tra và gửi năng lượng một lần mỗi ngày
 void sendEnergyDataOncePerDay() {
-  // struct tm timeinfo;
-  // if (!getLocalTime(&timeinfo)) {
-  //   Serial.println("Failed to get local time.");
-  // }
-
-  // char currentDate[11];
-  // snprintf(currentDate, sizeof(currentDate), "%04d-%02d-%02d", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
-
   // Lấy ngày hiện tại
   String currentDate = getCurrentDate();
-  String statusPath = String("/Energy_use_status/") + String(currentDate);
+  String statusPath = String("/Energy_usage_status/") + String(currentDate);
 
   // Kiểm tra trạng thái gửi trên Firebase nếu đã gửi thì không gửi nữa
   if (Firebase.getInt(firebaseData, statusPath)) {
@@ -154,14 +146,15 @@ void sendEnergyDataOncePerDay() {
     // Trạng thái chưa tồn tại, tiến hành gửi dữ liệu
     Serial.println("2.5 Status not found. Sending energy data...");
     // Gửi dữ liệu năng lượng
+
+    //reset relaycount mỗi ngày ké luôn
+    for (int i = 0; i < 4; i++) {
+      relayOnCounts[i] = 0;
+    }
+    Serial.println("2.5 Relay counts reset!");
+
     float totalEnergy = pzem.energy();
     if (isnan(totalEnergy)) totalEnergy = 0;  // Đảm bảo không gửi giá trị NaN
-
-    // char currentTimeStr[20];
-
-    // snprintf(currentTimeStr, sizeof(currentTimeStr), "%04d-%02d-%02d_%02d:%02d:%02d",
-    //          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-    //          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
 
     String currentTimeStr = getCurrentTime();
     String energyPath = String("/Energy_use/") + String(currentTimeStr) + "/totalEnergy";
@@ -183,17 +176,7 @@ void sendEnergyDataOncePerDay() {
 
 // 2.6 Hàm gửi dữ liệu nhiệt độ mỗi 30p
 void sendTemperatureAfter30Minutes() {
-  // struct tm timeinfo;
-  // if (!getLocalTime(&timeinfo)) {
-  //   Serial.println("Failed to get local time.");
-  // }
-
-  // char currentTimeStr[20];
-  // snprintf(currentTimeStr, sizeof(currentTimeStr), "%04d-%02d-%02d_%02d:%02d:%02d",
-  //          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-  //          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-  
-  // Lấy ngày hiện tại
+  // Lấy ngày giờ hiện tại
   String currentTimeStr = getCurrentTime();
 
   sensors1.requestTemperatures();
@@ -231,7 +214,29 @@ void sendTemperatureAfter30Minutes() {
 
 
 
+// struct tm timeinfo;
+// if (!getLocalTime(&timeinfo)) {
+//   Serial.println("Failed to get local time.");
+// }
 
+// char currentDate[11];
+// snprintf(currentDate, sizeof(currentDate), "%04d-%02d-%02d", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
+
+// struct tm timeinfo;
+// if (!getLocalTime(&timeinfo)) {
+//   Serial.println("Failed to get local time.");
+// }
+
+// char currentTimeStr[20];
+// snprintf(currentTimeStr, sizeof(currentTimeStr), "%04d-%02d-%02d_%02d:%02d:%02d",
+//          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+//          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+// char currentTimeStr[20];
+
+// snprintf(currentTimeStr, sizeof(currentTimeStr), "%04d-%02d-%02d_%02d:%02d:%02d",
+//          timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+//          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
 
 
 // Hàm xử lý dữ liệu PZEM kiểu cũ, cũng ok nhưng ko có phát hiện lỗi

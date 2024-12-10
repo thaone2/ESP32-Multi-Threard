@@ -6,7 +6,7 @@ void shutdownServer(const char* serverIP, int relayIndex) {
         int attempt = 0;   // Biến đếm số lần thử
         bool success = false; // Biến theo dõi trạng thái thành công
         // Thử gửi yêu cầu tắt máy tối đa 2 lần
-        while (attempt < 2 && !success) {
+        while (attempt < 1 && !success) {
             Serial.print("Attempt ");
             Serial.print(attempt + 1);
             Serial.println(" to shutdown server...");
