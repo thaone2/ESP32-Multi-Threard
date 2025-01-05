@@ -1,3 +1,16 @@
+// #include <Config.h>
+
+// #include <FirebaseClient.h>
+
+// #include <FB_Const.h>
+// #include <FB_Error.h>
+// #include <FB_Network.h>
+// #include <FB_Utils.h>
+// #include <Firebase.h>
+// #include <FirebaseESP32.h>
+// #include <FirebaseFS.h>
+// #include <MB_File.h>
+
 #include <time.h>
 #include <WiFi.h>
 #include <OneWire.h>
@@ -12,12 +25,12 @@
 #define FIREBASE_HOST "https://todolistapp-408f2-default-rtdb.asia-southeast1.firebasedatabase.app/"
 #define FIREBASE_AUTH "iej75ZGaEnpVDwfR67qv82qSa7GNq60DJf9AO5ig"
 
-// #define WIFI_SSID "Camera1"
-#define WIFI_SSID "Ngoc Van"
+#define WIFI_SSID "Camera1"
+// #define WIFI_SSID "Ngoc Van"
 #define WIFI_PASSWORD "22052020"
 
-// #define SHUTDOWN_TIMEOUT (900000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
-#define SHUTDOWN_TIMEOUT (29000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
+#define SHUTDOWN_TIMEOUT (900000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
+// #define SHUTDOWN_TIMEOUT (29000 / portTICK_PERIOD_MS)  //29s (đơn vị ticks)
 
 const char* serverIPs[] = {
   "192.168.1.19",
@@ -33,9 +46,9 @@ HardwareSerial hlkSerial(1);
 
 // Cảm biến DS18B20
 #define OUT_TEM_1 13  // Pin for the DS18B20 c1 la 13
-#define OUT_TEM_2 13  // Pin for the DS18B20 c2 la 12 Chân 12 bị lỗi nên đổi sang chân 33
-#define OUT_TEM_3 13  // Pin for the DS18B20 c3 la 14
-#define OUT_TEM_4 13  // Pin for the DS18B20 c4 la 27
+#define OUT_TEM_2 33  // Pin for the DS18B20 c2 la 33
+#define OUT_TEM_3 14  // Pin for the DS18B20 c3 la 14
+#define OUT_TEM_4 32  // Pin for the DS18B20 c4 la 27
 OneWire oneWire1(OUT_TEM_1);
 OneWire oneWire2(OUT_TEM_2);
 OneWire oneWire3(OUT_TEM_3);
@@ -59,10 +72,10 @@ Preferences preferencesBootCount;
 Preferences preferencesOnCount;
 
 // Relay
-#define RELAY_1_PIN 5   // GPIO18 cho relay 1 (máy tính 1)
-#define RELAY_2_PIN 18  // GPIO19 cho relay 2 (máy tính 2)
-#define RELAY_3_PIN 19  // GPIO21 cho relay 3 (máy tính 3)
-#define RELAY_4_PIN 21  // GPIO22 cho relay 4 (máy tính 4)
+#define RELAY_1_PIN 5   // GPIO5 cho relay 1 (máy tính 1)
+#define RELAY_2_PIN 18  // GPIO18 cho relay 2 (máy tính 2)
+#define RELAY_3_PIN 19  // GPIO19 cho relay 3 (máy tính 3)
+#define RELAY_4_PIN 21  // GPIO21 cho relay 4 (máy tính 4)
 
 bool isAutoMode = false;
 bool manualToAutoSwitch = false;
@@ -90,9 +103,8 @@ void setup() {
   Serial.begin(115200);                            // giao tiếp với serial monitor
   pzemSerial.begin(9600, SERIAL_8N1, RXD2, TXD2);  //Pzem
   hlkSerial.begin(256000, SERIAL_8N1);             //HLK
-  // pinMode(OUT_PIN, INPUT);
-  pinMode(OUT_PIN, INPUT_PULLDOWN);  //HLK
-  pinMode(RELAY_1_PIN, OUTPUT);      // Cấu hình relay là OUTPUT
+  pinMode(OUT_PIN, INPUT_PULLDOWN);                //HLK
+  pinMode(RELAY_1_PIN, OUTPUT);                    // Cấu hình relay là OUTPUT
   pinMode(RELAY_2_PIN, OUTPUT);
   pinMode(RELAY_3_PIN, OUTPUT);
   pinMode(RELAY_4_PIN, OUTPUT);
@@ -105,6 +117,11 @@ void setup() {
   sensors2.begin();
   sensors3.begin();
   sensors4.begin();
+
+  // Serial.printf("Number of sensors on bus 1: %d\n", sensors1.getDeviceCount());
+  // Serial.printf("Number of sensors on bus 2: %d\n", sensors2.getDeviceCount());
+  // Serial.printf("Number of sensors on bus 3: %d\n", sensors3.getDeviceCount());
+  // Serial.printf("Number of sensors on bus 4: %d\n", sensors4.getDeviceCount());
 
   //Khởi tạo Wifi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -123,12 +140,13 @@ void setup() {
   config.signer.tokens.legacy_token = FIREBASE_AUTH;
 
   // Thiết lập thời gian chờ cho firebase
-  config.timeout.serverResponse = 15000;    // 15 giây
-  config.timeout.socketConnection = 15000;  // 15 giây
+  // config.timeout.serverResponse = 15000;    // 10 giây
+  // config.timeout.socketConnection = 15000;  // 10 giây
+
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 
-  // Lấy trạng thái relayOnCounts 
+  // Lấy trạng thái relayOnCounts
   downloadRelayCountFirebase();
 
   //Khởi tạo semaphore mutex
@@ -137,24 +155,23 @@ void setup() {
     Serial.println("Failed to create mutex");
   }
 
-  // Task to run forever
   xTaskCreatePinnedToCore(     // Use xTaskCreate() in vanilla FreeRTOS
-    TaskControlRelayMode,      // Function to be called
-    "TaskControlRelayMode",    // Name of task
-    54192,                     // Stack size (bytes in ESP32, words in FreeRTOS)
+    TaskControlPC,             // Function to be called
+    "TaskControlPC",           // Name of task
+    34192,                     // Stack size (bytes in ESP32, words in FreeRTOS)
     NULL,                      // Parameter to pass to function
     configMAX_PRIORITIES - 1,  // Task priority (0 to to configMAX_PRIORITIES - 1)
     &relayTaskHandle,          // Task handle
-    app_cpu);                  // Run on one core for demo purposes (ESP32 only)
+    app_cpu);
 
-  xTaskCreatePinnedToCore(  // Use xTaskCreate() in vanilla FreeRTOS
-    TaskUploadHLK,          // Function to be called
-    "TaskUploadHLK",        // Name of task
-    34192,                  // Stack size (bytes in ESP32, words in FreeRTOS)
-    NULL,                   // Parameter to pass to function
-    1,                      // Task priority (0 to to configMAX_PRIORITIES - 1)
-    &relayTaskHandle,       // Task handle
-    app_cpu);               // Run on one core for demo purposes (ESP32 only)
+  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
+    TaskUploadAllSensors,    // Function to be called
+    "TaskUploadAllSensors",  // Name of task
+    24192,                   // Stack size (bytes in ESP32, words in FreeRTOS)
+    NULL,                    // Parameter to pass to function
+    2,                       // Task priority (0 to to configMAX_PRIORITIES - 1)
+    &relayTaskHandle,        // Task handle
+    app_cpu);                // Run on one core for demo purposes (ESP32 only)
 
   xTaskCreatePinnedToCore(            // Use xTaskCreate() in vanilla FreeRTOS
     TaskUploadTemperatureAfter30M,    // Function to be called
@@ -214,7 +231,7 @@ void downloadRelayCountFirebase() {
   String path = "/ComputerOnCount/" + today;
   if (Firebase.get(firebaseData, path)) {
     if (firebaseData.dataType() == "json") {
-      FirebaseJson &json = firebaseData.jsonObject();
+      FirebaseJson& json = firebaseData.jsonObject();
       FirebaseJsonData jsonData;
       // Duyệt qua từng phần tử để cập nhật relayOnCounts
       for (int i = 0; i < 4; i++) {
@@ -222,7 +239,7 @@ void downloadRelayCountFirebase() {
         if (json.get(jsonData, key)) {
           relayOnCounts[i] = jsonData.intValue;
         } else {
-          Serial.printf("Failed to get %s\n", key.c_str());
+          Serial.printf("1.3 Failed to get %s\n", key.c_str());
         }
       }
       // In kết quả ra Serial để kiểm tra
@@ -394,32 +411,42 @@ void turnOnRelaysByCombination(int bootCount) {
   updateRelayOnCountsToFirebase(relayOnCounts);
 }
 
-// 1.10 Hàm update trạng thái relay lên firebase
+// 1.10v2 Hàm update trạng thái relay lên Firebase bằng JSON
 void updateRelayStatesToFirebase(bool status[]) {
-  checkWiFiConnection();         // Kiểm tra kết nối Wi-Fi
-  for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật trạng thái
-    String relaySPath = "/Computer/computer" + String(i + 1) + "/status";
-    int relayState = status[i] ? 1 : 0;                           // Cập nhật trạng thái relay (1 = bật, 0 = tắt)
-    if (Firebase.setInt(firebaseData, relaySPath, relayState)) {  // Gửi trạng thái lên Firebase cho relaySPath
-      // Serial.printf("Relay %d status updated successfully at path: %s\n", i + 1, relaySPath.c_str());
-    } else {
-      Serial.printf("1.10 Failed to update Relay %d status at path: %s. Error: %s\n", i + 1, relaySPath.c_str(), firebaseData.errorReason().c_str());
-    }
+  checkWiFiConnection();
+  // Tạo đối tượng JSON
+  FirebaseJson relayStateJson;
+  for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để thêm dữ liệu vào JSON
+    String relayKey = "computer" + String(i + 1) + "/status";
+    relayStateJson.set(relayKey.c_str(), status[i] ? 1 : 0);
   }
-  Serial.printf("1.10 updateRelayStatesToFirebase success");
+  // Đường dẫn tổng thể
+  String relayPath = "/Computer";
+  // Gửi toàn bộ trạng thái relay lên Firebase
+  if (Firebase.set(firebaseData, relayPath, relayStateJson)) {
+    Serial.println("1.10 All relay states updated successfully.");
+  } else {
+    Serial.printf("1.10 Failed to update relay states: %s\n", firebaseData.errorReason().c_str());
+  }
 }
 
-// 1.11 Hàm update số lần bật tắt máy lên firebase
+// 1.11v2 Hàm update số lần bật tắt máy lên Firebase bằng JSON
 void updateRelayOnCountsToFirebase(int counts[]) {
-  checkWiFiConnection();  // Kiểm tra kết nối Wi-Fi
+  checkWiFiConnection();
   String currentTime = getCurrentDate();
-  for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật số lần bật
-    String relayCPath1 = "/ComputerOnCount/" + String(currentTime) + "/computer" + String(i + 1) + "/onCount";
-    if (Firebase.setInt(firebaseData, relayCPath1, counts[i])) {  // Gửi số lần bật lên Firebase cho relayPath1
-      // Serial.printf("1.11 Relay %d onCount updated successfully at path: %s\n", i + 1, relayCPath1.c_str());
-    } else {
-      Serial.printf("1.11 Failed to update Relay %d onCount at path: %s. Error: %s\n", i + 1, relayCPath1.c_str(), firebaseData.errorReason().c_str());
-    }
+  // Tạo đối tượng JSON
+  FirebaseJson relayCountJson;
+  for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để thêm dữ liệu vào JSON
+    String relayKey = "computer" + String(i + 1) + "/onCount";
+    relayCountJson.set(relayKey.c_str(), counts[i]);
+  }
+  // Đường dẫn tổng thể cho ngày hiện tại
+  String relayCPath = "/ComputerOnCount/" + String(currentTime);
+  // Gửi toàn bộ dữ liệu số lần bật tắt lên Firebase
+  if (Firebase.set(firebaseData, relayCPath, relayCountJson)) {
+    Serial.println("1.11 All relay onCounts updated successfully.");
+  } else {
+    Serial.printf("1.11 Failed to update relay onCounts: %s\n", firebaseData.errorReason().c_str());
   }
 }
 
@@ -437,20 +464,19 @@ void checkWiFiConnection() {
 }
 
 // 1.13 Hàm điều khiển Relay
-void TaskControlRelayMode(void* pvParameters) {
+void TaskControlPC(void* pvParameters) {
   for (;;) {
-    // Kiểm tra kết nối Wi-Fi trước khi bắt đầu điều khiển relay
-    checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
-    if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+    checkWiFiConnection();
+    if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
+      // if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+      // if (xSemaphoreTake(relayMutex, 1000 / portTICK_PERIOD_MS)) {
       Serial.print("1.13 Free heap: ");
       Serial.println(esp_get_free_heap_size());
       Serial.print("1.13 relay core: ");
       Serial.println(xPortGetCoreID());
-
       // Kiểm tra xem có ở chế độ tự động hay không
       if (getAuto()) {
         Serial.println("1.13 Đang ở chế độ auto");
-
         //Cập nhật trạng thái cho đúng về isAuto
         if (!isAutoMode) {
           isAutoMode = true;          // Chuyển sang chế độ auto
@@ -463,8 +489,13 @@ void TaskControlRelayMode(void* pvParameters) {
         Serial.print("1.13 Đang ở chế độ thủ công");
         controlComputersManually();  // Điều khiển relay thủ công
       }
-      Serial.println("1.13----------------TaskControlRelayMode: Accessing relay.");
+      Serial.println("1.13----------------TaskControlPC: Accessing relay.");
       xSemaphoreGive(relayMutex);
+    } else {
+      Serial.println("1.13 Failed to acquire relayMutex in task TaskControlPC");
+      Serial.println("1.13 Restarting Firebase...");
+      Firebase.begin(&config, &auth);  // Tái khởi tạo Firebase
+      Firebase.reconnectWiFi(true);    // Tự động kết nối lại Wi-Fi
     }
     vTaskDelay(3000 / portTICK_PERIOD_MS);
   }
@@ -473,11 +504,18 @@ void TaskControlRelayMode(void* pvParameters) {
 // 1.14 Hàm upload nhiệt độ mỗi 30phuts
 void TaskUploadTemperatureAfter30M(void* pvParameters) {
   for (;;) {
-    checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
-    if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+    checkWiFiConnection();
+    if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
+      // if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+      // if (xSemaphoreTake(relayMutex, 1000 / portTICK_PERIOD_MS)) {
       sendTemperatureAfter30Minutes();
       Serial.println("1.14----------------TaskUploadTemperatureAfter30M: Accessing relay.");
       xSemaphoreGive(relayMutex);
+    } else {
+      Serial.println("1.14 Failed to acquire relayMutex in task TaskUploadTemperatureAfter30M");
+      Serial.println("1.14 Restarting Firebase...");
+      Firebase.begin(&config, &auth);  // Tái khởi tạo Firebase
+      Firebase.reconnectWiFi(true);    // Tự động kết nối lại Wi-Fi
     }
     vTaskDelay(1800000 / portTICK_PERIOD_MS);
   }
@@ -490,6 +528,42 @@ void loop() {
 
 
 
+
+
+
+
+
+
+
+
+// 1.11 Hàm update số lần bật tắt máy lên firebase
+// void updateRelayOnCountsToFirebase(int counts[]) {
+//   checkWiFiConnection();  // Kiểm tra kết nối Wi-Fi
+//   String currentTime = getCurrentDate();
+//   for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật số lần bật
+//     String relayCPath1 = "/ComputerOnCount/" + String(currentTime) + "/computer" + String(i + 1) + "/onCount";
+//     if (Firebase.setInt(firebaseData, relayCPath1, counts[i])) {  // Gửi số lần bật lên Firebase cho relayPath1
+//       // Serial.printf("1.11 Relay %d onCount updated successfully at path: %s\n", i + 1, relayCPath1.c_str());
+//     } else {
+//       Serial.printf("1.11 Failed to update Relay %d onCount at path: %s. Error: %s\n", i + 1, relayCPath1.c_str(), firebaseData.errorReason().c_str());
+//     }
+//   }
+// }
+
+// 1.10 Hàm update trạng thái relay lên firebase
+// void updateRelayStatesToFirebase(bool status[]) {
+//   checkWiFiConnection();         // Kiểm tra kết nối Wi-Fi
+//   for (int i = 0; i < 4; i++) {  // Duyệt qua tất cả các relay để cập nhật trạng thái
+//     String relaySPath = "/Computer/computer" + String(i + 1) + "/status";
+//     int relayState = status[i] ? 1 : 0;                           // Cập nhật trạng thái relay (1 = bật, 0 = tắt)
+//     if (Firebase.setInt(firebaseData, relaySPath, relayState)) {  // Gửi trạng thái lên Firebase cho relaySPath
+//       // Serial.printf("Relay %d status updated successfully at path: %s\n", i + 1, relaySPath.c_str());
+//     } else {
+//       Serial.printf("1.10 Failed to update Relay %d status at path: %s. Error: %s\n", i + 1, relaySPath.c_str(), firebaseData.errorReason().c_str());
+//     }
+//   }
+//   Serial.printf("1.10 updateRelayStatesToFirebase success");
+// }
 
 
 
@@ -984,6 +1058,25 @@ void loop() {
 // }
 
 
+// xTaskCreatePinnedToCore(  // Use xTaskCreate() in vanilla FreeRTOS
+//   TaskUploadHLK,          // Function to be called
+//   "TaskUploadHLK",        // Name of task
+//   24192,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+//   NULL,                   // Parameter to pass to function
+//   2,                      // Task priority (0 to to configMAX_PRIORITIES - 1)
+//   &relayTaskHandle,       // Task handle
+//   app_cpu);               // Run on one core for demo purposes (ESP32 only)
+
+// Task to run forever
+// xTaskCreatePinnedToCore(     // Use xTaskCreate() in vanilla FreeRTOS
+//   TaskControlRelayMode,      // Function to be called
+//   "TaskControlRelayMode",    // Name of task
+//   34192,                     // Stack size (bytes in ESP32, words in FreeRTOS)
+//   NULL,                      // Parameter to pass to function
+//   configMAX_PRIORITIES - 1,  // Task priority (0 to to configMAX_PRIORITIES - 1)
+//   &relayTaskHandle,          // Task handle
+//   app_cpu);                  // Run on one core for demo purposes (ESP32 only)
+
 
 // Khởi tạo task này nằm trong hàm setup
 //           tên hàm   tên tượng trưng  stack null mức độ ưu tiên  handle của task
@@ -1013,23 +1106,23 @@ void loop() {
 // vTaskDelay(500 / portTICK_PERIOD_MS);
 
 
-  // Tạo các task
-  // xTaskCreate(
-  //   TaskControlRelayMode,    // Task function
-  //   "TaskControlRelayMode",  // Name of task
-  //   84192,                   // Stack size
-  //   NULL,                    // Task input parameter
-  //   2,                       // Priority
-  //   &relayTaskHandle         // Task handle
-  // );
-  // xTaskCreate(
-  //   TaskUploadHLK,       // Task function
-  //   "TaskUploadHLK",     // Name of task
-  //   54192,               // Stack size
-  //   NULL,                // Task input parameter
-  //   1,                   // Priority
-  //   &firebaseTaskHandle  // Task handle
-  // );
+// Tạo các task
+// xTaskCreate(
+//   TaskControlRelayMode,    // Task function
+//   "TaskControlRelayMode",  // Name of task
+//   84192,                   // Stack size
+//   NULL,                    // Task input parameter
+//   2,                       // Priority
+//   &relayTaskHandle         // Task handle
+// );
+// xTaskCreate(
+//   TaskUploadHLK,       // Task function
+//   "TaskUploadHLK",     // Name of task
+//   54192,               // Stack size
+//   NULL,                // Task input parameter
+//   1,                   // Priority
+//   &firebaseTaskHandle  // Task handle
+// );
 
 
 // xTaskCreate(TaskRadarData, "TaskRadarData", 8196, NULL, 0, NULL);

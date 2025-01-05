@@ -1,26 +1,27 @@
 // 2.1 Task cập nhật dữ liệu các cảm biến
-void TaskUploadHLK(void* pvParameters) {
+void TaskUploadAllSensors(void* pvParameters) {
   for (;;) {
-    checkWiFiConnection();  // Gọi hàm kiểm tra và kết nối lại Wi-Fi nếu cần
-    if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+    checkWiFiConnection();
+    if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
+    // if (xSemaphoreTake(relayMutex, portMAX_DELAY)) {
+    // if (xSemaphoreTake(relayMutex, 1000 / portTICK_PERIOD_MS)) {
       Serial.print("2.1: sensor core: ");
       Serial.println(xPortGetCoreID());
-      // Gửi dữ liệu năng lượng một lần mỗi ngày
-      sendEnergyDataOncePerDay();
-      vTaskDelay(500 / portTICK_PERIOD_MS);
-      // ----- ĐỌC VÀ GỬI TRẠNG THÁI RADAR -----
-      handleRadarData();
-      vTaskDelay(500 / portTICK_PERIOD_MS);
-      // ----- ĐỌC VÀ GỬI NHIỆT ĐỘ -----
-      handleTemperatureData();
-      vTaskDelay(500 / portTICK_PERIOD_MS);
-      // ----- ĐỌC VÀ GỬI DỮ LIỆU PZEM -----
-      handlePZEMData();
-      vTaskDelay(500 / portTICK_PERIOD_MS);
+      sendEnergyDataOncePerDay(); // Gửi dữ liệu năng lượng một lần mỗi ngày
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      handleRadarData(); // Gửi trạng thái radar
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      handleTemperatureData(); // Gửi trạng thái nhiệt độ
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      handlePZEMData(); // Gửi trạng thái pzem
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
       Serial.println("2.1 ----> Task Sensor Update: Accessing shared upload sensor.");
       xSemaphoreGive(relayMutex);
     } else {
       Serial.println("2.1 Failed to acquire relayMutex for upload from Sensor update firebase. ");
+      Serial.println("2.1 Restarting Firebase...");
+      Firebase.begin(&config, &auth);  // Tái khởi tạo Firebase
+      Firebase.reconnectWiFi(true);    // Tự động kết nối lại Wi-Fi
     }
     vTaskDelay(30000 / portTICK_PERIOD_MS);
   }
@@ -29,8 +30,7 @@ void TaskUploadHLK(void* pvParameters) {
 // 2.2 Hàm xử lý dữ liệu radar
 void handleRadarData() {
   int radarStatus = digitalRead(OUT_PIN);
-  checkWiFiConnection();  // Kiểm tra kết nối Wi-Fi
-
+  checkWiFiConnection();
   if (Firebase.setInt(firebaseData, "/HLK_RADAR/status", radarStatus)) {
     Serial.printf("2.2 Updated Radar state successfully: %d\n", radarStatus);
   } else {
@@ -38,8 +38,7 @@ void handleRadarData() {
     Serial.printf("2.2 Failed to update radar state: bug is function handleRadarData");
   }
 }
-
-// 2.3 Hàm xử lý dữ liệu nhiệt độ
+// 2.3v2 Hàm xử lý dữ liệu nhiệt độ và gửi một lần qua JSON
 void handleTemperatureData() {
   sensors1.requestTemperatures();
   sensors2.requestTemperatures();
@@ -52,83 +51,49 @@ void handleTemperatureData() {
     sensors3.getTempCByIndex(0),
     sensors4.getTempCByIndex(0)
   };
+
+  // Tạo đối tượng JSON
+  FirebaseJson tempJson;
   for (int i = 0; i < 4; i++) {
     if (!isnan(temps[i])) {
-      String tempPath = "/Temperatures/computer" + String(i + 1) + "/temperature";
-      if (Firebase.setFloat(firebaseData, tempPath, temps[i])) {
-        Serial.printf("2.3 Temperature of computer %d sent successfully: %.2f\n", i + 1, temps[i]);
-      } else {
-        // Serial.printf("Failed to send temperature of computer %d: %s\n", i + 1, firebaseData.errorReason().c_str());
-        Serial.printf("2.3 Failed to send temperature of computer: function handleTemperatureData");
-      }
+      String tempPath = "computer" + String(i + 1) + "/temperature";
+      tempJson.set(tempPath.c_str(), temps[i]);
     }
   }
+  // Gửi toàn bộ dữ liệu nhiệt độ qua Firebase
+  if (Firebase.set(firebaseData, "/Temperatures", tempJson)) {
+    Serial.println("2.3 All temperature data sent successfully.");
+  } else {
+    Serial.printf("2.3 Failed to send temperature data: %s\n", firebaseData.errorReason().c_str());
+  }
 }
-// 2.4 Hàm xử lý dữ liệu PZEM
+
+// 2.4v2 Hàm xử lý dữ liệu PZEM và gửi một lần qua JSON
 void handlePZEMData() {
-  // Đọc dữ liệu từ PZEM
   float voltage = pzem.voltage();
   float current = pzem.current();
   float frequency = pzem.frequency();
   float power = pzem.power();
   float energy = pzem.energy();
+  // Tạo đối tượng JSON
+  FirebaseJson pzemJson;
+  // Thêm dữ liệu vào JSON
+  pzemJson.set("voltage", isnan(voltage) ? 0 : voltage);
+  pzemJson.set("current", isnan(current) ? 0 : current);
+  pzemJson.set("frequency", isnan(frequency) ? 0 : frequency);
+  pzemJson.set("power", isnan(power) ? 0 : power);
+  pzemJson.set("energy", isnan(energy) ? 0 : energy);
 
-  // Gửi dữ liệu lên Firebase
-  if (!isnan(voltage)) {
-    if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/voltage", voltage)) {
-      Serial.printf("2.4 Voltage sent: %.2fV\n", voltage);
-    } else {
-      Serial.printf("2.4 Failed to send voltage: %.2fV, Error: %s\n", voltage, firebaseData.errorReason().c_str());
-    }
+  // Gửi toàn bộ dữ liệu PZEM qua Firebase
+  if (Firebase.set(firebaseData, "/PZEM_Voltage", pzemJson)) {
+    Serial.println("2.4 All PZEM data sent successfully.");
   } else {
-    Serial.println("2.4 Voltage data invalid (NaN).");
+    Serial.printf("2.4 Failed to send PZEM data: %s\n", firebaseData.errorReason().c_str());
   }
-
-  if (!isnan(current)) {
-    if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/current", current)) {
-      Serial.printf("2.4 Current sent: %.2fA\n", current);
-    } else {
-      Serial.printf("2.4 Failed to send current: %.2fA, Error: %s\n", current, firebaseData.errorReason().c_str());
-    }
-  } else {
-    Serial.println("2.4 Current data invalid (NaN).");
-  }
-
-  if (!isnan(frequency)) {
-    if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/frequency", frequency)) {
-      Serial.printf("2.4 Frequency sent: %.2fHz\n", frequency);
-    } else {
-      Serial.printf("2.4 Failed to send frequency: %.2fHz, Error: %s\n", frequency, firebaseData.errorReason().c_str());
-    }
-  } else {
-    Serial.println("2.4 Frequency data invalid (NaN).");
-  }
-
-  if (!isnan(power)) {
-    if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/power", power)) {
-      Serial.printf("2.4 Power sent: %.2fW\n", power);
-    } else {
-      Serial.printf("2.4 Failed to send power: %.2fW, Error: %s\n", power, firebaseData.errorReason().c_str());
-    }
-  } else {
-    Serial.println("2.4 Power data invalid (NaN).");
-  }
-
-  if (!isnan(energy)) {
-    if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/energy", energy)) {
-      Serial.printf("2.4 Energy sent: %.2fkWh\n", energy);
-    } else {
-      Serial.printf("2.4 Failed to send energy: %.2fkWh, Error: %s\n", energy, firebaseData.errorReason().c_str());
-    }
-  } else {
-    Serial.println("2.4 Energy data invalid (NaN).");
-  }
-
   // Tổng hợp log
   Serial.printf("2.4 PZEM Data processed: Voltage=%.2fV, Current=%.2fA, Frequency=%.2fHz, Power=%.2fW, Energy=%.2fkWh\n",
                 voltage, current, frequency, power, energy);
 }
-
 // 2.5 Hàm kiểm tra và gửi năng lượng một lần mỗi ngày
 void sendEnergyDataOncePerDay() {
   // Lấy ngày hiện tại
@@ -145,8 +110,6 @@ void sendEnergyDataOncePerDay() {
   } else {
     // Trạng thái chưa tồn tại, tiến hành gửi dữ liệu
     Serial.println("2.5 Status not found. Sending energy data...");
-    // Gửi dữ liệu năng lượng
-
     //reset relaycount mỗi ngày ké luôn
     for (int i = 0; i < 4; i++) {
       relayOnCounts[i] = 0;
@@ -173,12 +136,10 @@ void sendEnergyDataOncePerDay() {
     }
   }
 }
-
-// 2.6 Hàm gửi dữ liệu nhiệt độ mỗi 30p
+//2.6v2  Hàm gửi dữ liệu nhiệt độ mỗi 30 phút và gửi một lần qua JSON
 void sendTemperatureAfter30Minutes() {
   // Lấy ngày giờ hiện tại
   String currentTimeStr = getCurrentTime();
-
   sensors1.requestTemperatures();
   sensors2.requestTemperatures();
   sensors3.requestTemperatures();
@@ -190,16 +151,22 @@ void sendTemperatureAfter30Minutes() {
     sensors3.getTempCByIndex(0),
     sensors4.getTempCByIndex(0)
   };
+
+  // Tạo đối tượng JSON
+  FirebaseJson tempJson;
+
   for (int i = 0; i < 4; i++) {
     if (!isnan(temps[i])) {
-      String tempPath = "/Temperatures_30/" + String(currentTimeStr) + "/computer" + String(i + 1) + "/temperature";
-      if (Firebase.setFloat(firebaseData, tempPath, temps[i])) {
-        Serial.printf("2.6 Temperature of computer %d sent successfully: %.2f\n", i + 1, temps[i]);
-      } else {
-        // Serial.printf("Failed to send temperature of computer %d: %s\n", i + 1, firebaseData.errorReason().c_str());
-        Serial.printf("2.6 Failed to send temperature of computer: function sendTemperatureAfter30Minutes");
-      }
+      String tempPath = String(currentTimeStr) + "/computer" + String(i + 1) + "/temperature";
+      tempJson.set(tempPath.c_str(), temps[i]);
     }
+  }
+
+  // Gửi toàn bộ dữ liệu nhiệt độ qua Firebase
+  if (Firebase.updateNode(firebaseData, "/Temperatures_30", tempJson)) {
+    Serial.println("2.6 All temperature data sent successfully.");
+  } else {
+    Serial.printf("2.6 Failed to send temperature data: %s\n", firebaseData.errorReason().c_str());
   }
 }
 
@@ -207,8 +174,125 @@ void sendTemperatureAfter30Minutes() {
 
 
 
+// 2.3 Hàm xử lý dữ liệu nhiệt độ
+// void handleTemperatureData() {
+//   sensors1.requestTemperatures();
+//   sensors2.requestTemperatures();
+//   sensors3.requestTemperatures();
+//   sensors4.requestTemperatures();
 
+//   float temps[4] = {
+//     sensors1.getTempCByIndex(0),
+//     sensors2.getTempCByIndex(0),
+//     sensors3.getTempCByIndex(0),
+//     sensors4.getTempCByIndex(0)
+//   };
+//   for (int i = 0; i < 4; i++) {
+//     if (!isnan(temps[i])) {
+//       String tempPath = "/Temperatures/computer" + String(i + 1) + "/temperature";
+//       if (Firebase.setFloat(firebaseData, tempPath, temps[i])) {
+//         Serial.printf("2.3 Temperature of computer %d sent successfully: %.2f\n", i + 1, temps[i]);
+//       } else {
+//         // Serial.printf("Failed to send temperature of computer %d: %s\n", i + 1, firebaseData.errorReason().c_str());
+//         Serial.printf("2.3 Failed to send temperature of computer: function handleTemperatureData");
+//       }
+//     }
+//   }
+// }
 
+// 2.4 Hàm xử lý dữ liệu PZEM
+// void handlePZEMData() {
+//   // Đọc dữ liệu từ PZEM
+//   float voltage = pzem.voltage();
+//   float current = pzem.current();
+//   float frequency = pzem.frequency();
+//   float power = pzem.power();
+//   float energy = pzem.energy();
+
+//   // Gửi dữ liệu lên Firebase
+//   if (!isnan(voltage)) {
+//     if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/voltage", voltage)) {
+//       Serial.printf("2.4 Voltage sent: %.2fV\n", voltage);
+//     } else {
+//       Serial.printf("2.4 Failed to send voltage: %.2fV, Error: %s\n", voltage, firebaseData.errorReason().c_str());
+//     }
+//   } else {
+//     Serial.println("2.4 Voltage data invalid (NaN).");
+//   }
+
+//   if (!isnan(current)) {
+//     if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/current", current)) {
+//       Serial.printf("2.4 Current sent: %.2fA\n", current);
+//     } else {
+//       Serial.printf("2.4 Failed to send current: %.2fA, Error: %s\n", current, firebaseData.errorReason().c_str());
+//     }
+//   } else {
+//     Serial.println("2.4 Current data invalid (NaN).");
+//   }
+
+//   if (!isnan(frequency)) {
+//     if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/frequency", frequency)) {
+//       Serial.printf("2.4 Frequency sent: %.2fHz\n", frequency);
+//     } else {
+//       Serial.printf("2.4 Failed to send frequency: %.2fHz, Error: %s\n", frequency, firebaseData.errorReason().c_str());
+//     }
+//   } else {
+//     Serial.println("2.4 Frequency data invalid (NaN).");
+//   }
+
+//   if (!isnan(power)) {
+//     if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/power", power)) {
+//       Serial.printf("2.4 Power sent: %.2fW\n", power);
+//     } else {
+//       Serial.printf("2.4 Failed to send power: %.2fW, Error: %s\n", power, firebaseData.errorReason().c_str());
+//     }
+//   } else {
+//     Serial.println("2.4 Power data invalid (NaN).");
+//   }
+
+//   if (!isnan(energy)) {
+//     if (Firebase.setFloat(firebaseData, "/PZEM_Voltage/energy", energy)) {
+//       Serial.printf("2.4 Energy sent: %.2fkWh\n", energy);
+//     } else {
+//       Serial.printf("2.4 Failed to send energy: %.2fkWh, Error: %s\n", energy, firebaseData.errorReason().c_str());
+//     }
+//   } else {
+//     Serial.println("2.4 Energy data invalid (NaN).");
+//   }
+
+//   // Tổng hợp log
+//   Serial.printf("2.4 PZEM Data processed: Voltage=%.2fV, Current=%.2fA, Frequency=%.2fHz, Power=%.2fW, Energy=%.2fkWh\n",
+//                 voltage, current, frequency, power, energy);
+// }
+
+// 2.6 Hàm gửi dữ liệu nhiệt độ mỗi 30p
+// void sendTemperatureAfter30Minutes() {
+//   // Lấy ngày giờ hiện tại
+//   String currentTimeStr = getCurrentTime();
+
+//   sensors1.requestTemperatures();
+//   sensors2.requestTemperatures();
+//   sensors3.requestTemperatures();
+//   sensors4.requestTemperatures();
+
+//   float temps[4] = {
+//     sensors1.getTempCByIndex(0),
+//     sensors2.getTempCByIndex(0),
+//     sensors3.getTempCByIndex(0),
+//     sensors4.getTempCByIndex(0)
+//   };
+//   for (int i = 0; i < 4; i++) {
+//     if (!isnan(temps[i])) {
+//       String tempPath = "/Temperatures_30/" + String(currentTimeStr) + "/computer" + String(i + 1) + "/temperature";
+//       if (Firebase.setFloat(firebaseData, tempPath, temps[i])) {
+//         Serial.printf("2.6 Temperature of computer %d sent successfully: %.2f\n", i + 1, temps[i]);
+//       } else {
+//         // Serial.printf("Failed to send temperature of computer %d: %s\n", i + 1, firebaseData.errorReason().c_str());
+//         Serial.printf("2.6 Failed to send temperature of computer: function sendTemperatureAfter30Minutes");
+//       }
+//     }
+//   }
+// }
 
 
 
