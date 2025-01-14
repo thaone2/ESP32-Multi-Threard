@@ -9,8 +9,8 @@
 #include <DallasTemperature.h>
 
 // Thông tin Firebase
-#define FIREBASE_HOST "https://todolistapp-408f2-default-rtdb.asia-southeast1.firebasedatabase.app/" // đường dẫn đến firebase database
-#define FIREBASE_AUTH "iej75ZGaEnpVDwfR67qv82qSa7GNq60DJf9AO5ig" KEY AUTHENTICATION Của bạn
+#define FIREBASE_HOST "https://vidu ....firebasedatabase.app/" // đường dẫn đến firebase database
+#define FIREBASE_AUTH "KEY AUTHENTICATION Của bạn" 
 
 #define WIFI_SSID "KLTN_DT4"
 #define WIFI_PASSWORD "123455555"
