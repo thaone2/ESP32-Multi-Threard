@@ -109,7 +109,7 @@ void sendEnergyDataOncePerDay() {
   } else {
     // Trạng thái chưa tồn tại, tiến hành gửi dữ liệu
     // Serial.println("2.5 Status not found. Sending energy data...");
-    //reset relaycount mỗi ngày ké luôn
+    //reset relaycount mỗi ngày
     for (int i = 0; i < 4; i++) {
       relayOnCounts[i] = 0;
     }

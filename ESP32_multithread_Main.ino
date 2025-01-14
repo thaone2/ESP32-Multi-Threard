@@ -9,19 +9,15 @@
 #include <DallasTemperature.h>
 
 // Thông tin Firebase
-#define FIREBASE_HOST "https://todolistapp-408f2-default-rtdb.asia-southeast1.firebasedatabase.app/"
-#define FIREBASE_AUTH "iej75ZGaEnpVDwfR67qv82qSa7GNq60DJf9AO5ig"
+#define FIREBASE_HOST "https://todolistapp-408f2-default-rtdb.asia-southeast1.firebasedatabase.app/" // đường dẫn đến firebase database
+#define FIREBASE_AUTH "iej75ZGaEnpVDwfR67qv82qSa7GNq60DJf9AO5ig" KEY AUTHENTICATION Của bạn
 
-// #define WIFI_SSID "Camera1"
-// #define WIFI_PASSWORD "22052020"
 #define WIFI_SSID "KLTN_DT4"
 #define WIFI_PASSWORD "123455555"
 
-// #define SHUTDOWN_TIMEOUT (600000 / portTICK_PERIOD_MS)  // 15 phút (đơn vị ticks)
-// #define SHUTDOWN_TIMEOUT (29000 / portTICK_PERIOD_MS)  //29s (đơn vị ticks)
-#define SHUTDOWN_TIMEOUT 30000
+#define SHUTDOWN_TIMEOUT 600000
 
-
+// Khai báo IP của các máy con
 const char* serverIPs[] = {
   "192.168.176.2",
   "192.168.1.78",
@@ -107,7 +103,6 @@ void setup() {
   sensors2.begin();
   sensors3.begin();
   sensors4.begin();
-
 
   //Khởi tạo Wifi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -253,53 +248,6 @@ bool getAuto() {
   }
 }
 
-// 1.5 Hàm kiểm tra cảm biến radar và điều khiển relay ở chế độ Auto sử dụng tick cho rtos
-// void controlComputersForRadar() {
-//   static TickType_t lastDetectionTime = 0;       // Thời gian cuối cùng phát hiện người (ticks)
-//   TickType_t currentTime = xTaskGetTickCount();  // Thời gian hiện tại (ticks)
-//   int radarState = digitalRead(OUT_PIN);         // Đọc trạng thái radar
-//   if (radarState == HIGH) {                      // Nếu có người
-//     if (isAutoMode) {                            // Chỉ xử lý nếu đang ở chế độ auto
-//       if (manualToAutoSwitch) {                  // Chuyển từ chế độ manual sang auto
-//         // Kiểm tra xem tất cả các relay có đang tắt không
-//         bool allRelaysOff = true;
-//         for (int i = 0; i < 4; i++) {
-//           if (relayStates[i]) {
-//             allRelaysOff = false;
-//             break;
-//           }
-//         }
-//         if (allRelaysOff) {
-//           Serial.println("1.5 Hệ thống đang ở chế độ auto, bật lại hai máy tính ngẫu nhiên.");
-//           OnRelay();  // Hàm bật ngẫu nhiên hai máy tính
-//         } else {
-//           Serial.println("1.5 Có máy tính đang bật, không cần thực hiện bật lại.");
-//         }
-//         manualToAutoSwitch = false;  // Cập nhật trạng thái chuyển đổi
-//       }
-//     }
-//     lastDetectionTime = currentTime;  // Cập nhật thời gian phát hiện người
-//   } else {                            // Không có người
-//     if (isAutoMode) {                 // Chỉ xử lý nếu đang ở chế độ auto
-//       // Kiểm tra nếu không có người trong khoảng thời gian timeout
-//       if ((currentTime - lastDetectionTime) >= SHUTDOWN_TIMEOUT) {
-//         Serial.println("1.5 Không phát hiện người trong thời gian dài, tắt tất cả máy tính.");
-//         // Tắt từng máy tính và relay
-//         for (int i = 0; i < 4; i++) {
-//           if (relayStates[i]) {  // Chỉ tắt nếu relay đang bật
-//             shutdownServer(serverIPs[i], i);
-//             vTaskDelay(1000 / portTICK_PERIOD_MS);  // Chờ để đảm bảo máy tính shutdown hoàn toàn
-//             digitalWrite(relays[i], HIGH);          // Ngắt relay
-//             relayStates[i] = false;                 // Cập nhật trạng thái relay
-//           }
-//         }
-//       }
-//     }
-//   }
-//   updateRelayStatesToFirebase(relayStates);
-//   updateRelayOnCountsToFirebase(relayOnCounts);
-//   Serial.printf("1.5 Điều khiển máy tính bởi radar: %d %d %d %d\n", relayStates[0], relayStates[1], relayStates[2], relayStates[3]);
-// }
 // 1.5 Hàm kiểm tra cảm biến radar và điều khiển relay ở chế độ Auto sử dụng tick cho rtos
 void controlComputersForRadar() {
   static TickType_t lastDetectionTime = 0;       // Thời gian cuối cùng phát hiện người
